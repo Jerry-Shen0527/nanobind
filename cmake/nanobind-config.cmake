@@ -68,6 +68,7 @@ function (nanobind_build_library TARGET_NAME)
     ${NB_DIR}/include/nanobind/nb_defs.h
     ${NB_DIR}/include/nanobind/nb_descr.h
     ${NB_DIR}/include/nanobind/nb_enums.h
+    ${NB_DIR}/include/nanobind/nb_embed.h
     ${NB_DIR}/include/nanobind/nb_error.h
     ${NB_DIR}/include/nanobind/nb_func.h
     ${NB_DIR}/include/nanobind/nb_lib.h

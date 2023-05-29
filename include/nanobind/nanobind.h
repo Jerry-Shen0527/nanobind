@@ -38,6 +38,7 @@
 #include "nb_python.h"
 #include "nb_defs.h"
 #include "nb_enums.h"
+#include "nb_embed.h"
 #include "nb_traits.h"
 #include "nb_tuple.h"
 #include "nb_lib.h"
