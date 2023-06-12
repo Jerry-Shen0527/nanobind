@@ -10,7 +10,7 @@
 #pragma once
 
 #include "nb_defs.h"
-#include "Python.h"
+#include "nb_python.h"
 
 #include <memory>
 #include <vector>
