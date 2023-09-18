@@ -22,9 +22,9 @@ notation to bind operators to python. See the :ref:`operator overloading
    This is an internal class that should be accessed through the singleton
    :cpp:var:`self` value.
 
-   It supports the overloaded operators listed below. Depending on whether or
-   not :cpp:var:`self` is the left or right argument of a binary operation, the
-   binding will map to different Python methods as shown below.
+   It supports the overloaded operators listed below. Depending on whether
+   :cpp:var:`self` is the left or right argument of a binary operation,
+   the binding will map to different Python methods as shown below.
 
    .. list-table::
       :header-rows: 1
@@ -243,6 +243,9 @@ include directive:
    not comparable or copy-assignable, some of these functions will not be
    generated.
 
+   The binding operation is a no-op if the vector type has already been
+   registered with nanobind.
+
 .. _map_bindings:
 
 STL map bindings
@@ -307,6 +310,9 @@ nanobind API and require an additional include directive:
         - Returns an iterable view of the map's values
       * - ``items(self, arg: Map) -> Map.ItemView``
         - Returns an iterable view of the map's items
+
+   The binding operation is a no-op if the map type has already been
+   registered with nanobind.
 
 Unique pointer deleter
 ----------------------
@@ -411,14 +417,31 @@ include directive:
 
    #include <nanobind/ndarray.h>
 
-Detailed documentation including example code is provided
-in a :ref:`separate section <ndarrays>`.
+Detailed documentation including example code is provided in a :ref:`separate
+section <ndarrays>`.
+
+.. cpp:function:: bool ndarray_check(handle h) noexcept
+
+   Test whether the Python object represents an ndarray. Currently, the
+   function considers NumPy, PyTorch, TensorFlow, and XLA arrays.
 
 .. cpp:class:: template <typename... Args> ndarray
 
    .. cpp:function:: ndarray() = default
 
       Create an invalid array.
+
+   .. cpp:function:: template <typename... Args2> explicit ndarray(const ndarray<Args2...> &other)
+
+      Reinterpreting constructor that wraps an existing nd-array (parameterized
+      by `Args`) into a new ndarray (parameterized by `Args2`).   No copy or
+      conversion is made.
+
+      Dropping parameters is always safe. For example, a function that
+      returns different array types could call it to convert ``ndarray<T>`` to
+      ``ndarray<>``.  When adding constraints, the constructor is only safe to
+      use following a runtime check to ensure that newly created array actually
+      possesses the advertised properties. 
 
    .. cpp:function:: ndarray(const ndarray &)
 
@@ -447,7 +470,9 @@ in a :ref:`separate section <ndarrays>`.
       Create an array wrapping an existing memory allocation. The following
       parameters can be specified:
 
-      - `value`: pointer address of the memory region.
+      - `value`: pointer address of the memory region. When the ndarray is
+        parameterized by a constant scalar type to indicate read-only access, a
+        const pointer must be passed instead.
 
       - `ndim`: the number of dimensions.
 
@@ -464,6 +489,13 @@ in a :ref:`separate section <ndarrays>`.
 
       - The `device_type` and `device_id` indicate the device and address
         space associated with the pointer `value`.
+
+   .. cpp:function:: ndarray(void * value, const std::initializer_list<size_t> shape, handle owner = nanobind::handle(), std::initializer_list<int64_t> strides = { }, dlpack::dtype dtype = nanobind::dtype<Scalar>(), int32_t device_type = device::cpu::value, int32_t device_id = 0)
+
+      Alternative form of the above constructor, which accepts the ``shape``
+      and ``strides`` arguments using a ``std::initializer_list``. It
+      automatically infers the value of ``ndim`` based on the size of
+      ``shape``.
 
    .. cpp:function:: dlpack::dtype dtype() const
 
@@ -533,10 +565,24 @@ in a :ref:`separate section <ndarrays>`.
       Return a mutable pointer to the array data. Only enabled when `Scalar` is
       not itself ``const``.
 
+   .. cpp:function:: template <typename... Extra> auto view()
+
+      Returns an nd-array view that is optimized for fast array access on the
+      CPU. You may optionally specify additional ndarray constraints via the
+      `Extra` parameter (though a runtime check should first be performed to
+      ensure that the array possesses these properties).
+
+      The returned view provides the operations ``data()``, ``ndim()``,
+      ``shape()``, ``stride()``, and ``operator()`` following the conventions
+      of the `ndarray` type.
+
    .. cpp:function:: template <typename... Ts> auto& operator()(Ts... indices)
 
       Return a mutable reference to the element at stored at the provided
       index/indices. ``sizeof(Ts)`` must match :cpp:func:`ndim()`.
+
+      This accessor is only available when the scalar type and array dimension
+      were specified as template parameters.
 
 Data types
 ^^^^^^^^^^
@@ -620,18 +666,31 @@ Annotate the data type with ``const`` to indicate a read-only array. Note that
 only the buffer protocol/NumPy interface considers ``const``-ness at the
 moment; data exchange with other array libraries will ignore this annotation.
 
+When the is unspecified (e.g., to accept arbitrary input arrays), the
+:cpp:class:`ro` annotation can instead be used to denote read-only access:
+
+.. cpp:class:: ro
+
+   Indicate read-only access (use only when no data type is specified.)
+
+
 nanobind does not support non-standard types as documented in the section on
 :ref:`dtype limitations <dtype_restrictions>`.
 
 Shape
 +++++
 
-.. cpp:class:: template<size_t... Is> shape
+.. cpp:class:: template <size_t... Is> shape
 
    Require the array to have ``sizeof...(Is)`` dimensions. Each entry of `Is`
    specifies a fixed size constraint for that specific dimension. An entry
    equal to :cpp:var:`any` indicates that any size should be accepted for this
    dimension.
+
+.. cpp:class:: template <size_t N> ndim
+
+   Alternative to the above that only constrains the array dimension.
+   ``nb::ndim<2>`` is equivalent to ``nb::shape<nb::any, nb::any>``.
 
 .. cpp:var:: constexpr size_t any = (size_t) -1
 

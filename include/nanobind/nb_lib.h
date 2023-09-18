@@ -50,6 +50,9 @@ public:
     /// Decrease the reference count of all appended objects
     void release() noexcept;
 
+    /// Does the list contain any entries?
+    inline bool used() { return m_size != 1; }
+
 protected:
     /// Out of memory, expand..
     void expand() noexcept;
@@ -63,13 +66,21 @@ protected:
 
 // ========================================================================
 
-/// Raise a std::runtime_error with the given message
+/// Raise a runtime error with the given message
 #if defined(__GNUC__)
     __attribute__((noreturn, __format__ (__printf__, 1, 2)))
 #else
     [[noreturn]]
 #endif
 NB_CORE void raise(const char *fmt, ...);
+
+/// Raise a type error with the given message
+#if defined(__GNUC__)
+    __attribute__((noreturn, __format__ (__printf__, 1, 2)))
+#else
+    [[noreturn]]
+#endif
+NB_CORE void raise_type_error(const char *fmt, ...);
 
 /// Abort the process with a fatal error
 #if defined(__GNUC__)
@@ -87,6 +98,10 @@ NB_CORE void raise_next_overload_if_null(void *p);
 
 /// Raise nanobind::cast_error
 NB_CORE void raise_cast_error();
+
+// ========================================================================
+
+NB_CORE void init(const char *domain);
 
 // ========================================================================
 
@@ -112,8 +127,19 @@ NB_CORE PyObject *bytes_from_cstr_and_size(const char *c, size_t n);
 
 // ========================================================================
 
-/// Convert a Python object into a Python integer
+/// Convert a Python object into a Python integer object
 NB_CORE PyObject *int_from_obj(PyObject *o);
+
+/// Convert a Python object into a Python floating point object
+NB_CORE PyObject *float_from_obj(PyObject *o);
+
+// ========================================================================
+
+/// Convert a Python object into a Python list
+NB_CORE PyObject *list_from_obj(PyObject *o);
+
+/// Convert a Python object into a Python tuple
+NB_CORE PyObject *tuple_from_obj(PyObject *o);
 
 // ========================================================================
 
@@ -269,6 +295,12 @@ NB_CORE size_t nb_type_size(PyObject *t) noexcept;
 /// Return the alignment of the type wrapped by the given nanobind type object
 NB_CORE size_t nb_type_align(PyObject *t) noexcept;
 
+/// Return a unicode string representing the long-form name of the given type
+NB_CORE PyObject *nb_type_name(PyObject *t) noexcept;
+
+/// Return a unicode string representing the long-form name of object's type
+NB_CORE PyObject *nb_inst_name(PyObject *o) noexcept;
+
 /// Return the C++ type_info wrapped by the given nanobind type object
 NB_CORE const std::type_info *nb_type_info(PyObject *t) noexcept;
 
@@ -284,8 +316,15 @@ NB_CORE PyObject *nb_type_lookup(const std::type_info *t) noexcept;
 /// Allocate an instance of type 't'
 NB_CORE PyObject *nb_inst_alloc(PyTypeObject *t);
 
+/// Allocate an zero-initialized instance of type 't'
+NB_CORE PyObject *nb_inst_alloc_zero(PyTypeObject *t);
+
 /// Allocate an instance of type 't' referencing the existing 'ptr'
-NB_CORE PyObject *nb_inst_wrap(PyTypeObject *t, void *ptr);
+NB_CORE PyObject *nb_inst_reference(PyTypeObject *t, void *ptr,
+                                    PyObject *parent);
+
+/// Allocate an instance of type 't' taking ownership of the existing 'ptr'
+NB_CORE PyObject *nb_inst_take_ownership(PyTypeObject *t, void *ptr);
 
 /// Call the destructor of the given python object
 NB_CORE void nb_inst_destruct(PyObject *o) noexcept;
@@ -299,19 +338,16 @@ NB_CORE void nb_inst_copy(PyObject *dst, const PyObject *src) noexcept;
 /// Move-construct 'dst' from 'src', mark it as ready and to be destructed (must have the same nb_type)
 NB_CORE void nb_inst_move(PyObject *dst, const PyObject *src) noexcept;
 
+/// Destruct 'dst', copy-construct 'dst' from 'src', mark ready and retain 'destruct' status (must have the same nb_type)
+NB_CORE void nb_inst_replace_copy(PyObject *dst, const PyObject *src) noexcept;
+
+/// Destruct 'dst', move-construct 'dst' from 'src', mark ready and retain 'destruct' status (must have the same nb_type)
+NB_CORE void nb_inst_replace_move(PyObject *dst, const PyObject *src) noexcept;
+
 /// Check if a particular instance uses a Python-derived type
 NB_CORE bool nb_inst_python_derived(PyObject *o) noexcept;
 
-/**
- * This function can be used to manually set two important flags associated with
- * every nanobind instance (``nb_inst``).
- *
- * 1. 'ready': is the object fully constructed? Otherwise, nanobind will not
- *    allow passing it to a function.
- *
- * 2. 'destruct': Should nanobind call the C++ destructor when the instance
- *    is garbage collected?
- */
+/// Overwrite the instance's ready/destruct flags
 NB_CORE void nb_inst_set_state(PyObject *o, bool ready, bool destruct) noexcept;
 
 /// Query the 'ready' and 'destruct' flags of an instance
@@ -401,7 +437,10 @@ NB_CORE void ndarray_dec_ref(ndarray_handle *) noexcept;
 
 /// Wrap a ndarray_handle* into a PyCapsule
 NB_CORE PyObject *ndarray_wrap(ndarray_handle *, int framework,
-                               rv_policy policy) noexcept;
+                               rv_policy policy, cleanup_list *cleanup) noexcept;
+
+/// Check if an object is a known ndarray type (NumPy, PyTorch, Tensorflow, JAX)
+NB_CORE bool ndarray_check(PyObject *o) noexcept;
 
 // ========================================================================
 
@@ -458,6 +497,10 @@ NB_CORE void slice_compute(PyObject *slice, Py_ssize_t size,
 
 NB_CORE PyObject *repr_list(PyObject *o);
 NB_CORE PyObject *repr_map(PyObject *o);
+
+#if NB_TYPE_GET_SLOT_IMPL
+NB_CORE void *type_get_slot(PyTypeObject *t, int slot_id);
+#endif
 
 NAMESPACE_END(detail)
 NAMESPACE_END(NB_NAMESPACE)

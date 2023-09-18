@@ -133,6 +133,28 @@
 #    error "nanobind requires a newer PyPy version (>= 7.3.10)"
 #endif
 
+#if defined(NB_DOMAIN)
+#  define NB_DOMAIN_STR NB_TOSTRING(NB_DOMAIN)
+#else
+#  define NB_DOMAIN_STR nullptr
+#endif
+
+#if !defined(PYPY_VERSION)
+#  if PY_VERSION_HEX < 0x030A0000
+#    define NB_TYPE_GET_SLOT_IMPL 1 // Custom implementation of nb::type_get_slot
+#  else
+#    define NB_TYPE_GET_SLOT_IMPL 0
+#  endif
+#  if PY_VERSION_HEX < 0x030C0000
+#    define NB_TYPE_FROM_METACLASS_IMPL 1 // Custom implementation of PyType_FromMetaclass
+#  else
+#    define NB_TYPE_FROM_METACLASS_IMPL 0
+#  endif
+#else
+#  define NB_TYPE_FROM_METACLASS_IMPL 1
+#  define NB_TYPE_GET_SLOT_IMPL 1
+#endif
+
 #define NB_MODULE_IMPL(name)                                                   \
     extern "C" [[maybe_unused]] NB_EXPORT PyObject *PyInit_##name();           \
     extern "C" NB_EXPORT PyObject *PyInit_##name()
@@ -142,6 +164,7 @@
     [[maybe_unused]] static void NB_CONCAT(nanobind_init_,                     \
                                            name)(::nanobind::module_ &);       \
     NB_MODULE_IMPL(name) {                                                     \
+        nanobind::detail::init(NB_DOMAIN_STR);                                 \
         nanobind::module_ m =                                                  \
             nanobind::steal<nanobind::module_>(nanobind::detail::module_new(   \
                 NB_TOSTRING(name), &NB_CONCAT(nanobind_module_def_, name)));   \

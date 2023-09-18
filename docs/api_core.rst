@@ -620,6 +620,15 @@ Wrapper classes
 
    Wrapper class representing Python ``tuple`` instances.
 
+   .. cpp:function:: tuple()
+
+      Create an empty tuple
+
+   .. cpp:function:: tuple(handle h)
+
+      Attempt to convert a given Python object into a tuple. Analogous to the
+      expression ``tuple(h)`` in Python.
+
    .. cpp:function:: size_t size() const
 
       Return the number of tuple elements.
@@ -648,11 +657,20 @@ Wrapper classes
 
    Wrapper class representing Python ``list`` instances.
 
+   .. cpp:function:: list()
+
+      Create an empty list
+
+   .. cpp:function:: list(handle h)
+
+      Attempt to convert a given Python object into a list. Analogous to the
+      expression ``list(h)`` in Python.
+
    .. cpp:function:: size_t size() const
 
       Return the number of list elements.
 
-   .. cpp:function:: template <typename T> void append(T &&value)
+   .. cpp:function:: template <typename T> void append(T&& value)
 
       Append an element to the list. When `T` does not already represent a
       wrapped Python object, the function performs a cast.
@@ -688,6 +706,11 @@ Wrapper classes
    .. cpp:function:: size_t size() const
 
       Return the number of dictionary elements.
+
+   .. cpp:function:: template <typename T> bool contains(T&& key) const
+
+      Check whether the dictionary contains a particular key. When `T` does not
+      already represent a wrapped Python object, the function performs a cast.
 
    .. cpp:function:: detail::dict_iterator begin() const
 
@@ -808,6 +831,24 @@ Wrapper classes
       Convert a Python integer into a C++ arithmetic type.
 
 
+.. cpp:class:: float_: public object
+
+   This wrapper class represents Python ``float`` instances.
+
+   .. cpp:function:: float_(handle h)
+
+      Performs an floating point cast within Python. This is equivalent to the
+      Python expression ``float(h)``.
+
+   .. cpp:function:: explicit float_(double value)
+
+      Convert an C++ double value into a Python float objecct
+
+   .. cpp:function:: explicit operator double() const
+
+      Convert a Python float object into a C++ double value
+
+
 .. cpp:class:: str: public object
 
    This wrapper class represents Python unicode ``str`` instances.
@@ -825,7 +866,7 @@ Wrapper classes
 
       Convert a C-style string in UTF-8 encoding of length ``n`` bytes into a Python string.
 
-   .. cpp:function:: const char * c_str()
+   .. cpp:function:: const char * c_str() const
 
       Convert a Python string into a null-terminated C-style string with UTF-8
       encoding.
@@ -856,14 +897,13 @@ Wrapper classes
 
       Convert a null-terminated C-style string encoding of length ``n`` bytes into a Python ``bytes`` object.
 
-   .. cpp:function:: const char * c_str()
+   .. cpp:function:: const char * c_str() const
 
       Convert a Python bytes object into a null-terminated C-style string.
 
    .. cpp:function:: size_t size() const
 
       Return the size in bytes.
-
 
 .. cpp:class:: type_object: public object
 
@@ -876,6 +916,11 @@ Wrapper classes
 .. cpp:class:: mapping : public object
 
    Wrapper class representing arbitrary Python mapping types.
+
+   .. cpp:function:: template <typename T> bool contains(T&& key) const
+
+      Check whether the map contains a particular key. When `T` does not
+      already represent a wrapped Python object, the function performs a cast.
 
    .. cpp:function:: list keys() const
 
@@ -960,11 +1005,28 @@ Wrapper classes
 
    .. cpp:function:: ellipsis()
 
-      Create a wrapper referencing the unique Python `Ellipsis` object.
+      Create a wrapper referencing the unique Python ``Ellipsis`` object.
+
+.. cpp:class:: not_implemented: public object
+
+   Wrapper class representing a Python ``NotImplemented`` object.
+
+   .. cpp:function:: not_implemented()
+
+      Create a wrapper referencing the unique Python ``NotImplemented`` object.
 
 .. cpp:class:: callable: public object
 
    Wrapper class representing a callable Python object.
+
+.. cpp:class:: weakref: public object
+
+   Wrapper class representing a Python weak reference object.
+
+   .. cpp:function:: explicit weakref(handle obj, handle callback = { })
+
+      Construct a new weak reference that points to `obj`. If provided,
+      Python will invoke the callable `callback` when `obj` expires.
 
 .. cpp:class:: args : public tuple
 
@@ -1079,6 +1141,11 @@ the reference section on :ref:`class binding <class_binding>`.
       Example use case: handling a Python error that occurs in a C++
       destructor where you cannot raise a C++ exception.
 
+   .. cpp:function:: void discard_as_unraisable(const char * context) noexcept
+
+      Convenience wrapper around the above function, which takes a C-style
+      string for the ``context`` argument.
+
    .. cpp:function:: handle type() const
 
       Returns a handle to the exception type
@@ -1087,7 +1154,7 @@ the reference section on :ref:`class binding <class_binding>`.
 
       Returns a handle to the exception value
 
-   .. cpp:function:: handle traceback() const
+   .. cpp:function:: object traceback() const
 
       Returns a handle to the exception's traceback object
 
@@ -1199,6 +1266,25 @@ the reference section on :ref:`class binding <class_binding>`.
    interface provided by :cpp:class:`exception` class. This function provides
    an escape hatch for more specialized use cases.
 
+.. cpp:function:: void chain_error(handle type, const char * fmt, ...) noexcept
+
+   Raise a Python error of type ``type`` using the format string ``fmt``
+   interpreted by ``PyErr_FormatV``.
+
+   If a Python error state was already set prior to calling this method, then
+   the new error is *chained* on top of the existing one. Otherwise, the
+   function creates a new error without initializing its ``__cause__`` field.
+
+.. cpp:function:: void raise_from(python_error &e, handle type, const char * fmt, ...)
+
+   Convenience wrapper around :cpp:func:`chain_error <chain_error>`. It takes
+   an existing Python error (e.g. caught in a ``catch`` block) and creates an
+   additional Python exception with the current error as cause. It then
+   re-raises :cpp:class:`python_error`. The argument ``fmt`` is a
+   ``printf``-style format string interpreted by ``PyErr_FormatV``.
+
+   Usage of this function is explained in the documentation section on
+   :ref:`exception chaining <exception_chaining>`.
 
 Casting
 -------
@@ -1212,6 +1298,20 @@ Casting
    implementation may also attempt *implicit conversions* to perform the cast.
 
    The function raises a :cpp:type:`cast_error` when the conversion fails.
+   See :cpp:func:`try_cast()` for an alternative that never raises.
+
+.. cpp:function:: template <typename T, typename Derived> bool try_cast(const detail::api<Derived> &value, T &out, bool convert = true) noexcept
+
+   Convert the Python object `value` (typically a :cpp:class:`handle` or a
+   :cpp:class:`object` subclass) into a C++ object of type `T`, and store it
+   in the output parameter `out`.
+
+   When the `convert` argument is set to ``true`` (the default), the
+   implementation may also attempt *implicit conversions* to perform the cast.
+
+   The function returns ``false`` when the conversion fails. In this case, the
+   `out` parameter is left untouched. See :cpp:func:`cast()` for an alternative
+   that instead raises an exception in this case.
 
 .. cpp:function:: template <typename T> object cast(T &&value, rv_policy policy = rv_policy::automatic_reference)
 
@@ -1535,12 +1635,23 @@ Class binding
 
 .. cpp:class:: template <typename T, typename... Ts> class_ : public object
 
-   Binding helper class to expose a custom C++ type `T` (declared using either the ``class`` or ``struct`` keyword)
-   in Python.
+   Binding helper class to expose a custom C++ type `T` (declared using either
+   the ``class`` or ``struct`` keyword) in Python.
 
    The variable length parameter `Ts` is optional and  can be used to specify
    the base class of `T` and/or an alias needed to realize :ref:`trampoline
    classes <trampolines>`.
+
+   When the type ``T`` was previously already registered (either within the
+   same extension or another extension), the the ``class_<..>`` declaration is
+   redundant. nanobind will print a warning message in this case:
+
+   .. code-block:: text
+
+      RuntimeWarning: nanobind: type 'MyType' was already registered!
+
+   The ``class_<..>`` instance will subsequently wrap the original type object
+   instead of creating a new one.
 
    .. cpp:function:: template <typename... Extra> class_(handle scope, const char * name, const Extra &... extra)
 
@@ -2020,8 +2131,7 @@ Low-level type and instance access
 nanobind exposes a low-level interface to provide fine-grained control over
 the sequence of steps that instantiates a Python object wrapping a C++
 instance. An thorough explanation of these features is provided in a
-:ref:`separate section <lowlevel>`. The function listing below merely
-summarizes their signatures.
+:ref:`separate section <lowlevel>`. 
 
 Type objects
 ^^^^^^^^^^^^
@@ -2051,12 +2161,32 @@ Type objects
    Return a reference to supplemental data stashed in a type object.
    The type ``T`` must exactly match the type specified in the
    :cpp:class:`nb::supplement\<T\> <supplement>` annotation used when
-   creating the type; no type check is performed, and accessing an
-   incorrect supplement type may crash the interpreter.
-   See :cpp:class:`supplement`.
+   creating the type; no type check is performed, and invalid supplement
+   accesses may crash the interpreter. Also refer to
+   :cpp:class:`nb::supplement\<T\> <supplement>`.
+
+.. cpp:function:: str type_name(handle h)
+
+   Return the full (module-qualified) name of a type object as a Python string.
+
+.. cpp:function:: void * type_get_slot(handle h, int slot_id)
+
+   On Python 3.10+, this function is a simple wrapper around the Python C API
+   function ``PyType_GetSlot`` that provides stable API-compatible access to
+   type object members. On Python 3.9 and earlier, the official function did
+   not work on non-heap types. The nanobind version consistently works on heap
+   and non-heap types across Python versions.
 
 Instances
 ^^^^^^^^^
+
+The documentation below refers to two per-instance flags with the following meaning:
+
+- *ready*: is the instance fully constructed? nanobind will not permit passing
+  the instance to a bound C++ function when this flag is unset.
+
+- *destruct*: should nanobind call the C++ destructor when the instance is
+  garbage-collected?
 
 .. cpp:function:: bool inst_check(handle h)
 
@@ -2066,53 +2196,129 @@ Instances
 .. cpp:function:: template <typename T> T * inst_ptr(handle h)
 
    Assuming that `h` represents an instance of a type that was previously bound
-   via :cpp:class:`class_`, return a pointer to the C++ instance.
+   via :cpp:class:`class_`, return a pointer to the underlying C++ instance.
 
-   The function *does not check* that `T` is consistent with the type of `h`.
+   The function *does not check* that `h` actually contains an instance with
+   C++ type `T`.
 
 .. cpp:function:: object inst_alloc(handle h)
 
-   Assuming that `h` represents a bound type (see :cpp:func:`type_check`),
-   allocate an uninitialized Python object of type `h` and return it.
+   Assuming that `h` represents a type object that was previously created via
+   :cpp:class:`class_` (see :cpp:func:`type_check`), allocate an unitialized
+   object of type `h` and return it. The *ready* and *destruct* flags of the
+   returned instance are both set to ``false``.
 
-.. cpp:function:: object inst_wrap(handle h, void * p)
+.. cpp:function:: object inst_alloc_zero(handle h)
 
-   Assuming that `h` represents an instance of a type that was previously bound
-   via :cpp:class:`class_`, create an object of type `h` that wraps an existing
-   C++ instace `p`.
+   Assuming that `h` represents a type object that was previously created via
+   :cpp:class:`class_` (see :cpp:func:`type_check`), allocate a zero-initialized
+   object of type `h` and return it. The *ready* and *destruct* flags of the
+   returned instance are both set to ``true``.
+
+   This operation is equivalent to calling :cpp:func:`inst_alloc` followed by
+   :cpp:func:`inst_zero`.
+
+.. cpp:function:: object inst_reference(handle h, void * p, handle parent = handle())
+
+   Assuming that `h` represents a type object that was previously created via
+   :cpp:class:`class_` (see :cpp:func:`type_check`) create an object of type
+   `h` that wraps an existing C++ instance `p`.
+
+   The *ready* and *destruct* flags of the returned instance are respectively
+   set to ``true`` and ``false``.
+
+   This is analogous to casting a C++ object with return value policy
+   :cpp:enumerator:`rv_policy::reference`.
+
+   If a `parent` object is specified, the instance keeps this parent alive
+   while the newly created object exists. This is analogous to casting a C++
+   object with return value policy
+   :cpp:enumerator:`rv_policy::reference_internal`.
+
+.. cpp:function:: object inst_take_ownership(handle h, void * p)
+
+   Assuming that `h` represents a type object that was previously created via
+   :cpp:class:`class_` (see :cpp:func:`type_check`) create an object of type
+   `h` that wraps an existing C++ instance `p`.
+
+   The *ready* and *destruct* flags of the returned instance are both set to
+   ``true``.
+
+   This is analogous to casting a C++ object with return value policy
+   :cpp:enumerator:`rv_policy::take_ownership`.
 
 .. cpp:function:: void inst_zero(handle h)
 
-   Zero-initialize the contents of `h`.
+   Zero-initialize the contents of `h`. Sets the *ready* and *destruct* flags
+   to ``true``.
 
 .. cpp:function:: bool inst_ready(handle h)
 
-   Query the *ready* field of the object `h`.
-
-.. cpp:function:: void inst_mark_ready(handle h)
-
-   Mark the object `h` as *ready*.
+   Query the *ready* flag of the instance `h`.
 
 .. cpp:function:: std::pair<bool, bool> inst_state(handle h)
 
-   Query the *ready* and *destruct* fields of the object `h`.
+   Separately query the *ready* and *destruct* flags of the instance `h`.
+
+.. cpp:function:: void inst_mark_ready(handle h)
+
+   Simultaneously set the *ready* and *destruct* flags of the instance `h` to ``true``.
 
 .. cpp:function:: void inst_set_state(handle h, bool ready, bool destruct)
 
-   Set the *ready* and *destruct* fields of the object `h`.
+   Separately set the *ready* and *destruct* flags of the instance `h`.
 
 .. cpp:function:: void inst_destruct(handle h)
 
-   Destruct the object `h`.
+   Destruct the instance `h`. This entails calling the C++ destructor if the
+   *destruct* flag is set and then setting the *ready* and *destruct* fields to
+   ``false``.
 
 .. cpp:function:: void inst_copy(handle dst, handle src)
 
-   Move-construct the contents of `src` into `dst` and mark `dst` as *ready*.
+   Copy-construct the contents of `src` into `dst` and set the *ready* and
+   *destruct* flags of `dst` to ``true``.
+
+   `dst` should be an uninitialized instance of the same type. Note that
+   setting the *destruct* flag may be problematic if `dst` is an offset into an
+   existing object created using :cpp:func:`inst_reference` (the destructor
+   will be called multiple times in this case). If so, you must use
+   :cpp:func:`inst_set_state` to disable the flag following the call to
+   :cpp:func:`inst_copy`.
 
 .. cpp:function:: void inst_move(handle dst, handle src)
 
-   Copy-construct the contents of `src` into `dst` and mark `dst` as *ready*.
+   Move-construct the contents of `src` into `dst` and set the *ready* and
+   *destruct* flags of `dst` to ``true``.
 
+   `dst` should be an uninitialized instance of the same type. Note that
+   setting the *destruct* flag may be problematic if `dst` is an offset into an
+   existing object created using :cpp:func:`inst_reference` (the destructor
+   will be called multiple times in this case). If so, you must use
+   :cpp:func:`inst_set_state` to disable the flag following the call to
+   :cpp:func:`inst_move`.
+
+.. cpp:function:: void inst_replace_copy(handle dst, handle src)
+
+   Destruct the contents of `dst` (even if the *destruct* flag is ``false``).
+   Next, copy-construct the contents of `src` into `dst` and set the *ready*
+   flag of ``dst``. The value of the *destruct* flag is subsequently set to its
+   value prior to the call.
+
+   This operation is useful to replace the contents of one instance with that
+   of another regardless of whether `dst` has been created using
+   :cpp:func:`inst_alloc`, :cpp:func:`inst_reference`, or
+   :cpp:func:`inst_take_ownership`.
+
+.. cpp:function:: void inst_replace_move(handle dst, handle src)
+
+   Analogous to :cpp:func:`inst_replace_copy`, except that a move constructor
+   is used here.
+
+.. cpp:function:: str inst_name(handle h)
+
+   Return the full (module-qualified) name of the instance's type object as a
+   Python string.
 
 Global flags
 ------------

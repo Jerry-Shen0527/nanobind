@@ -17,7 +17,7 @@
 
 /// Tracks the ABI of nanobind
 #ifndef NB_INTERNALS_VERSION
-#  define NB_INTERNALS_VERSION 8
+#  define NB_INTERNALS_VERSION 10
 #endif
 
 /// On MSVC, debug and release builds are not ABI-compatible!
@@ -56,20 +56,25 @@
 #endif
 
 /// On Linux/OSX, changes in __GXX_ABI_VERSION__ indicate ABI incompatibility.
+/// Also keep potentially ABI-incompatible visual studio builds apart.
 #if defined(__GXX_ABI_VERSION)
 #  define NB_BUILD_ABI "_cxxabi" NB_TOSTRING(__GXX_ABI_VERSION)
+#elif defined(_MSC_VER)
+#  define NB_BUILD_ABI "_mscver" NB_TOSTRING(_MSC_VER)
 #else
 #  define NB_BUILD_ABI ""
 #endif
 
+// Can have limited and non-limited-API extensions in the same process, and they might be incompatible
 #if defined(Py_LIMITED_API)
-#  define NB_LIMITED_API "_limited"
+#  define NB_STABLE_ABI "_stable"
 #else
-#  define NB_LIMITED_API ""
+#  define NB_STABLE_ABI ""
 #endif
 
-#define NB_INTERNALS_ID "__nb_internals_v" \
-    NB_TOSTRING(NB_INTERNALS_VERSION) NB_COMPILER_TYPE NB_STDLIB NB_BUILD_ABI NB_BUILD_TYPE NB_LIMITED_API "__"
+#define NB_INTERNALS_ID                                                        \
+    "v" NB_TOSTRING(NB_INTERNALS_VERSION)                                      \
+        NB_COMPILER_TYPE NB_STDLIB NB_BUILD_ABI NB_BUILD_TYPE NB_STABLE_ABI
 
 NAMESPACE_BEGIN(NB_NAMESPACE)
 NAMESPACE_BEGIN(detail)
@@ -190,11 +195,6 @@ static PyType_Spec nb_bound_method_spec = {
     /* .slots = */ nb_bound_method_slots
 };
 
-NB_THREAD_LOCAL current_method current_method_data =
-    current_method{ nullptr, nullptr };
-
-nb_internals *internals_p = nullptr;
-
 void default_exception_translator(const std::exception_ptr &p, void *) {
     try {
         std::rethrow_exception(p);
@@ -217,32 +217,38 @@ void default_exception_translator(const std::exception_ptr &p, void *) {
     }
 }
 
+nb_internals *internals = nullptr;
+PyTypeObject *nb_meta_cache = nullptr;
+
 #if !defined(PYPY_VERSION)
 static void internals_cleanup() {
+    if (!internals)
+        return;
+
     bool leak = false;
 
-    if (!internals_p->inst_c2p.empty()) {
-        if (internals_p->print_leak_warnings) {
+    if (!internals->inst_c2p.empty()) {
+        if (internals->print_leak_warnings) {
             fprintf(stderr, "nanobind: leaked %zu instances!\n",
-                    internals_p->inst_c2p.size());
+                    internals->inst_c2p.size());
         }
         leak = true;
     }
 
-    if (!internals_p->keep_alive.empty()) {
-        if (internals_p->print_leak_warnings) {
+    if (!internals->keep_alive.empty()) {
+        if (internals->print_leak_warnings) {
             fprintf(stderr, "nanobind: leaked %zu keep_alive records!\n",
-                    internals_p->keep_alive.size());
+                    internals->keep_alive.size());
         }
         leak = true;
     }
 
-    if (!internals_p->type_c2p.empty()) {
-        if (internals_p->print_leak_warnings) {
+    if (!internals->type_c2p.empty()) {
+        if (internals->print_leak_warnings) {
             fprintf(stderr, "nanobind: leaked %zu types!\n",
-                    internals_p->type_c2p.size());
+                    internals->type_c2p.size());
             int ctr = 0;
-            for (const auto &kv : internals_p->type_c2p) {
+            for (const auto &kv : internals->type_c2p) {
                 fprintf(stderr, " - leaked type \"%s\"\n", kv.second->name);
                 if (ctr++ == 10) {
                     fprintf(stderr, " - ... skipped remainder\n");
@@ -253,12 +259,12 @@ static void internals_cleanup() {
         leak = true;
     }
 
-    if (!internals_p->funcs.empty()) {
-        if (internals_p->print_leak_warnings) {
+    if (!internals->funcs.empty()) {
+        if (internals->print_leak_warnings) {
             fprintf(stderr, "nanobind: leaked %zu functions!\n",
-                    internals_p->funcs.size());
+                    internals->funcs.size());
             int ctr = 0;
-            for (auto [f, p] : internals_p->funcs) {
+            for (auto [f, p] : internals->funcs) {
                 fprintf(stderr, " - leaked function \"%s\"\n",
                         nb_func_data(f)->name);
                 if (ctr++ == 10) {
@@ -271,10 +277,11 @@ static void internals_cleanup() {
     }
 
     if (!leak) {
-        delete internals_p;
-        internals_p = nullptr;
+        delete internals;
+        internals = nullptr;
+        nb_meta_cache = nullptr;
     } else {
-        if (internals_p->print_leak_warnings) {
+        if (internals->print_leak_warnings) {
             fprintf(stderr, "nanobind: this is likely caused by a reference "
                             "counting issue in the binding code.\n");
         }
@@ -286,7 +293,10 @@ static void internals_cleanup() {
 }
 #endif
 
-static PyObject *internals_dict() {
+NB_NOINLINE void init(const char *name) {
+    if (internals)
+        return;
+
 #if defined(PYPY_VERSION)
     PyObject *dict = PyEval_GetBuiltins();
 #elif PY_VERSION_HEX < 0x03090000
@@ -294,29 +304,29 @@ static PyObject *internals_dict() {
 #else
     PyObject *dict = PyInterpreterState_GetDict(PyInterpreterState_Get());
 #endif
-    check(dict, "nanobind::detail::internals_dict(): failed!");
+    check(dict, "nanobind::detail::init(): could not access internals dictionary!");
 
-    return dict;
-}
+    PyObject *key = PyUnicode_FromFormat("__nb_internals_%s_%s__",
+                                         NB_INTERNALS_ID, name ? name : "");
+    check(key, "nanobind::detail::init(): could not create dictionary key!");
 
-static NB_NOINLINE nb_internals *internals_make() {
-    str nb_name("nanobind");
+    PyObject *capsule = PyDict_GetItem(dict, key);
+    if (capsule) {
+        Py_DECREF(key);
+        internals = (nb_internals *) PyCapsule_GetPointer(capsule, "nb_internals");
+        check(internals,
+              "nanobind::detail::internals_fetch(): capsule pointer is NULL!");
+        nb_meta_cache = internals->nb_meta;
+        return;
+    }
 
     nb_internals *p = new nb_internals();
 
-    PyObject *dict = internals_dict();
-
-    const char *internals_id = NB_INTERNALS_ID;
-    PyObject *capsule = PyCapsule_New(p, internals_id, nullptr);
-    int rv = PyDict_SetItemString(dict, internals_id, capsule);
-    check(!rv && capsule,
-          "nanobind::detail::internals_make(): allocation failed!");
-    Py_DECREF(capsule);
+    str nb_name("nanobind");
+    p->nb_module = PyModule_NewObject(nb_name.ptr());
 
     nb_meta_slots[0].pfunc = (PyObject *) &PyType_Type;
-
-    p->nb_module = PyModule_NewObject(nb_name.ptr());
-    p->nb_meta = (PyTypeObject *) PyType_FromSpec(&nb_meta_spec);
+    nb_meta_cache = p->nb_meta = (PyTypeObject *) PyType_FromSpec(&nb_meta_spec);
     p->nb_type_dict = PyDict_New();
     p->nb_func = (PyTypeObject *) PyType_FromSpec(&nb_func_spec);
     p->nb_method = (PyTypeObject *) PyType_FromSpec(&nb_method_spec);
@@ -324,7 +334,7 @@ static NB_NOINLINE nb_internals *internals_make() {
 
     check(p->nb_module && p->nb_meta && p->nb_type_dict && p->nb_func &&
               p->nb_method && p->nb_bound_method,
-          "nanobind::detail::internals_make(): initialization failed!");
+          "nanobind::detail::init(): initialization failed!");
 
 #if PY_VERSION_HEX < 0x03090000
     p->nb_func->tp_flags |= NB_HAVE_VECTORCALL;
@@ -396,27 +406,14 @@ static NB_NOINLINE nb_internals *internals_make() {
                 "reported by tools like 'valgrind'). If you are a user of a "
                 "python extension library, you can ignore this warning.");
 #endif
-    return p;
-}
 
-nb_internals *internals_fetch() {
-    PyObject *dict = internals_dict();
-
-    const char *internals_id = NB_INTERNALS_ID;
-    PyObject *capsule = PyDict_GetItemString(dict, internals_id);
-
-    nb_internals *ptr;
-    if (capsule) {
-        ptr = (nb_internals *) PyCapsule_GetPointer(capsule, internals_id);
-        check(ptr,
-              "nanobind::detail::internals_fetch(): capsule pointer is NULL!");
-    } else {
-        ptr = internals_make();
-    }
-
-    internals_p = ptr;
-
-    return ptr;
+    capsule = PyCapsule_New(p, "nb_internals", nullptr);
+    int rv = PyDict_SetItem(dict, key, capsule);
+    check(!rv && capsule,
+          "nanobind::detail::init(): capsule creation failed!");
+    Py_DECREF(capsule);
+    Py_DECREF(key);
+    internals = p;
 }
 
 #if defined(NB_COMPACT_ASSERTIONS)

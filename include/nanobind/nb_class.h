@@ -45,14 +45,11 @@ enum class type_flags : uint32_t {
     /// The class uses an intrusive reference counting approach
     intrusive_ptr            = (1 << 11),
 
-    /// Is this a trampoline class meant to be overloaded in Python?
-    is_trampoline            = (1 << 12),
-
     /// Is this a class that inherits from enable_shared_from_this?
     /// If so, type_data::keep_shared_from_this_alive is also set.
-    has_shared_from_this     = (1 << 13),
+    has_shared_from_this     = (1 << 12),
 
-    // Five more flag bits available (14 through 18) without needing
+    // Six more flag bits available (13 through 18) without needing
     // a larger reorganization
 };
 
@@ -244,20 +241,48 @@ inline size_t type_align(handle h) { return detail::nb_type_align(h.ptr()); }
 inline const std::type_info& type_info(handle h) { return *detail::nb_type_info(h.ptr()); }
 template <typename T>
 inline T &type_supplement(handle h) { return *(T *) detail::nb_type_supplement(h.ptr()); }
+inline str type_name(handle h) { return steal<str>(detail::nb_type_name(h.ptr())); };
 
 // Low level access to nanobind instance objects
 inline bool inst_check(handle h) { return type_check(h.type()); }
-inline object inst_alloc(handle h) { return steal(detail::nb_inst_alloc((PyTypeObject *) h.ptr())); }
-inline object inst_wrap(handle h, void *p) { return steal(detail::nb_inst_wrap((PyTypeObject *) h.ptr(), p)); }
+inline str inst_name(handle h) {
+    return steal<str>(detail::nb_inst_name(h.ptr()));
+};
+inline object inst_alloc(handle h) {
+    return steal(detail::nb_inst_alloc((PyTypeObject *) h.ptr()));
+}
+inline object inst_alloc_zero(handle h) {
+    return steal(detail::nb_inst_alloc_zero((PyTypeObject *) h.ptr()));
+}
+inline object inst_take_ownership(handle h, void *p) {
+    return steal(detail::nb_inst_take_ownership((PyTypeObject *) h.ptr(), p));
+}
+inline object inst_reference(handle h, void *p, handle parent = handle()) {
+    return steal(detail::nb_inst_reference((PyTypeObject *) h.ptr(), p, parent.ptr()));
+}
 inline void inst_zero(handle h) { detail::nb_inst_zero(h.ptr()); }
-inline void inst_set_state(handle h, bool ready, bool destruct) { detail::nb_inst_set_state(h.ptr(), ready, destruct); }
-inline std::pair<bool, bool> inst_state(handle h) { return detail::nb_inst_state(h.ptr()); }
+inline void inst_set_state(handle h, bool ready, bool destruct) {
+    detail::nb_inst_set_state(h.ptr(), ready, destruct);
+}
+inline std::pair<bool, bool> inst_state(handle h) {
+    return detail::nb_inst_state(h.ptr());
+}
 inline void inst_mark_ready(handle h) { inst_set_state(h, true, true); }
 inline bool inst_ready(handle h) { return inst_state(h).first; }
 inline void inst_destruct(handle h) { detail::nb_inst_destruct(h.ptr()); }
 inline void inst_copy(handle dst, handle src) { detail::nb_inst_copy(dst.ptr(), src.ptr()); }
 inline void inst_move(handle dst, handle src) { detail::nb_inst_move(dst.ptr(), src.ptr()); }
+inline void inst_replace_copy(handle dst, handle src) { detail::nb_inst_replace_copy(dst.ptr(), src.ptr()); }
+inline void inst_replace_move(handle dst, handle src) { detail::nb_inst_replace_move(dst.ptr(), src.ptr()); }
 template <typename T> T *inst_ptr(handle h) { return (T *) detail::nb_inst_ptr(h.ptr()); }
+inline void *type_get_slot(handle h, int slot_id) {
+#if NB_TYPE_GET_SLOT_IMPL
+    return detail::type_get_slot((PyTypeObject *) h.ptr(), slot_id);
+#else
+    return PyType_GetSlot((PyTypeObject *) h.ptr(), slot_id);
+#endif
+}
+
 
 template <typename... Args> struct init {
     template <typename T, typename... Ts> friend class class_;
@@ -280,11 +305,11 @@ private:
                 if constexpr (!std::is_same_v<Type, Alias> &&
                               std::is_constructible_v<Type, Args...>) {
                     if (!detail::nb_inst_python_derived(v.h.ptr())) {
-                        new ((Type *) v.p) Type{ (detail::forward_t<Args>) args... };
+                        new (v.p) Type{ (detail::forward_t<Args>) args... };
                         return;
                     }
                 }
-                new ((Alias *) v.p) Alias{ (detail::forward_t<Args>) args... };
+                new ((void *) v.p) Alias{ (detail::forward_t<Args>) args... };
             },
             extra...);
     }
@@ -360,9 +385,6 @@ public:
             d.base = &typeid(Base);
             d.flags |= (uint32_t) detail::type_init_flags::has_base;
         }
-
-        if constexpr (!std::is_same_v<Alias, T>)
-            d.flags |= (uint32_t) detail::type_flags::is_trampoline;
 
         if constexpr (detail::is_copy_constructible_v<T>) {
             d.flags |= (uint32_t) detail::type_flags::is_copy_constructible;

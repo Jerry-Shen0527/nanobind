@@ -4,20 +4,64 @@ if (NOT TARGET Python::Module)
   message(FATAL_ERROR "You must invoke 'find_package(Python COMPONENTS Interpreter Development REQUIRED)' prior to including nanobind.")
 endif()
 
-# Determine the Python extension suffix and stash in the CMake cache
-execute_process(
-  COMMAND "${Python_EXECUTABLE}" "-c"
-    "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))"
-  RESULT_VARIABLE NB_SUFFIX_RET
-  OUTPUT_VARIABLE NB_SUFFIX
-  OUTPUT_STRIP_TRAILING_WHITESPACE)
+# Determine the right suffix for ordinary and stable ABI extensions.
 
-if (NB_SUFFIX_RET AND NOT NB_SUFFIX_RET EQUAL 0)
-  message(FATAL_ERROR "nanobind: Python sysconfig query to "
-    "find 'EXT_SUFFIX' property failed!")
+# We always need to know the extension
+if(WIN32)
+  set(NB_SUFFIX_EXT ".pyd")
+else()
+  set(NB_SUFFIX_EXT "${CMAKE_SHARED_MODULE_SUFFIX}")
 endif()
 
-set(NB_SUFFIX ${NB_SUFFIX} CACHE INTERNAL "")
+# This was added in CMake 3.17+, also available earlier in scikit-build-core.
+# PyPy sets an invalid SOABI (platform missing), causing older FindPythons to
+# report an incorrect value. Only use it if it looks correct (X-X-X form).
+if(DEFINED Python_SOABI AND "${Python_SOABI}" MATCHES ".+-.+-.+")
+  set(NB_SUFFIX ".${Python_SOABI}${NB_SUFFIX_EXT}")
+endif()
+
+# Python_SOSABI is guaranteed to be available in CMake 3.26+, and it may
+# also be available as part of backported FindPython in scikit-build-core.
+if(DEFINED Python_SOSABI)
+  if(Python_SOSABI STREQUAL "")
+    set(NB_SUFFIX_S "${NB_SUFFIX_EXT}")
+  else()
+    set(NB_SUFFIX_S ".${Python_SOSABI}${NB_SUFFIX_EXT}")
+  endif()
+endif()
+
+# If either suffix is missing, call Python to compute it
+if(NOT DEFINED NB_SUFFIX OR NOT DEFINED NB_SUFFIX_S)
+  # Query Python directly to get the right suffix.
+  execute_process(
+    COMMAND "${Python_EXECUTABLE}" "-c"
+      "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))"
+    RESULT_VARIABLE NB_SUFFIX_RET
+    OUTPUT_VARIABLE EXT_SUFFIX
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+
+  if(NB_SUFFIX_RET AND NOT NB_SUFFIX_RET EQUAL 0)
+    message(FATAL_ERROR "nanobind: Python sysconfig query to "
+      "find 'EXT_SUFFIX' property failed!")
+  endif()
+
+  if(NOT DEFINED NB_SUFFIX)
+    set(NB_SUFFIX "${EXT_SUFFIX}")
+  endif()
+
+  if(NOT DEFINED NB_SUFFIX_S)
+    get_filename_component(NB_SUFFIX_EXT "${EXT_SUFFIX}" LAST_EXT)
+    if(WIN32)
+      set(NB_SUFFIX_S "${NB_SUFFIX_EXT}")
+    else()
+      set(NB_SUFFIX_S ".abi3${NB_SUFFIX_EXT}")
+    endif()
+  endif()
+endif()
+
+# Stash these for later use
+set(NB_SUFFIX   ${NB_SUFFIX}   CACHE INTERNAL "")
+set(NB_SUFFIX_S ${NB_SUFFIX_S} CACHE INTERNAL "")
 
 get_filename_component(NB_DIR "${CMAKE_CURRENT_LIST_FILE}" PATH)
 get_filename_component(NB_DIR "${NB_DIR}" PATH)
@@ -195,8 +239,7 @@ function(nanobind_extension name)
 endfunction()
 
 function(nanobind_extension_abi3 name)
-  get_filename_component(ext "${NB_SUFFIX}" LAST_EXT)
-  set_target_properties(${name} PROPERTIES PREFIX "" SUFFIX ".abi3${ext}")
+  set_target_properties(${name} PROPERTIES PREFIX "" SUFFIX "${NB_SUFFIX_S}")
 endfunction()
 
 function (nanobind_lto name)
@@ -205,7 +248,7 @@ function (nanobind_lto name)
     INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL ON)
 endfunction()
 
-function (nanobind_compile_options)
+function (nanobind_compile_options name)
   if (MSVC)
     target_compile_options(${name} PRIVATE /bigobj /MP)
   endif()
@@ -223,9 +266,16 @@ function (nanobind_set_visibility name)
   set_target_properties(${name} PROPERTIES CXX_VISIBILITY_PRESET hidden)
 endfunction()
 
+function (nanobind_musl_static_libcpp name)
+  if ("$ENV{AUDITWHEEL_PLAT}" MATCHES "musllinux")
+    target_link_options(${name} PRIVATE -static-libstdc++ -static-libgcc)
+  endif()
+endfunction()
+
 function(nanobind_add_module name)
   cmake_parse_arguments(PARSE_ARGV 1 ARG
-    "STABLE_ABI;NB_STATIC;NB_SHARED;PROTECT_STACK;LTO;NOMINSIZE;NOSTRIP;NOTRIM" "" "")
+    "STABLE_ABI;NB_STATIC;NB_SHARED;PROTECT_STACK;LTO;NOMINSIZE;NOSTRIP;MUSL_DYNAMIC_LIBCPP"
+    "NB_DOMAIN" "")
 
   add_library(${name} MODULE ${ARG_UNPARSED_ARGUMENTS})
 
@@ -239,24 +289,11 @@ function(nanobind_add_module name)
     set(ARG_NB_STATIC TRUE)
   endif()
 
-  # Stable ABI interface requires Python >= 3.12
-  if (ARG_STABLE_ABI AND (Python_VERSION_MAJOR EQUAL 3) AND (Python_VERSION_MINOR LESS 12))
-    set(ARG_STABLE_ABI OFF)
-  endif()
-
-  # Stable API interface requires CPython (PyPy isn't supported)
-  if (ARG_STABLE_ABI AND NOT (Python_INTERPRETER_ID STREQUAL "Python"))
-    set(ARG_STABLE_ABI OFF)
-  endif()
-
-  # On Windows, use of the stable ABI requires a very recent CMake version
-  if (ARG_STABLE_API AND WIN32 AND NOT TARGET Python::SABIModule)
-    if (CMAKE_VERSION VERSION_LESS 3.26)
-      message(WARNING "To build stable ABI packages on Windows, you must use CMake version 3.26 or newer!")
-    else()
-      message(WARNING "To build stable ABI packages on Windows, you must invoke 'find_package(Python COMPONENTS Interpreter Development.Module Development.SABIModule REQUIRED)' prior to including nanobind.")
-    endif()
-    set(ARG_STABLE_ABI OFF)
+  # Stable ABI builds require CPython >= 3.12 and Python::SABIModule
+  if ((Python_VERSION VERSION_LESS 3.12) OR
+      (NOT Python_INTERPRETER_ID STREQUAL "Python") OR
+      (NOT TARGET Python::SABIModule))
+    set(ARG_STABLE_ABI FALSE)
   endif()
 
   set(libname "nanobind")
@@ -268,7 +305,15 @@ function(nanobind_add_module name)
     set(libname "${libname}-abi3")
   endif()
 
+  if (ARG_NB_DOMAIN AND ARG_NB_SHARED)
+    set(libname ${libname}-${ARG_NB_DOMAIN})
+  endif()
+
   nanobind_build_library(${libname})
+
+  if (ARG_NB_DOMAIN)
+    target_compile_definitions(${name} PRIVATE NB_DOMAIN=${ARG_NB_DOMAIN})
+  endif()
 
   if (ARG_STABLE_ABI)
     target_compile_definitions(${libname} PUBLIC -DPy_LIMITED_API=0x030C0000)
@@ -293,6 +338,10 @@ function(nanobind_add_module name)
 
   if (ARG_LTO)
     nanobind_lto(${name})
+  endif()
+
+  if (ARG_NB_STATIC AND NOT ARG_MUSL_DYNAMIC_LIBCPP)
+    nanobind_musl_static_libcpp(${name})
   endif()
 
   nanobind_set_visibility(${name})

@@ -247,6 +247,8 @@ struct type_caster<T, enable_if_t<std::is_base_of_v<detail::api_tag, T>>> {
 public:
     NB_TYPE_CASTER(T, T::Name)
 
+    type_caster() : value(nullptr, ::nanobind::detail::steal_t()) { }
+
     bool from_python(handle src, uint8_t, cleanup_list *) noexcept {
         if (!isinstance<T>(src))
             return false;
@@ -348,6 +350,29 @@ struct type_caster : type_caster_base<Type> { };
 NAMESPACE_END(detail)
 
 template <typename T, typename Derived>
+bool try_cast(const detail::api<Derived> &value, T &out, bool convert = true) noexcept {
+    using Caster = detail::make_caster<T>;
+    using Output = typename Caster::template Cast<T>;
+
+    static_assert(!std::is_same_v<const char *, T>,
+                  "nanobind::try_cast(): cannot return a reference to a temporary.");
+
+    Caster caster;
+    if (caster.from_python(value.derived().ptr(),
+                           convert ? (uint8_t) detail::cast_flags::convert
+                                   : (uint8_t) 0, nullptr)) {
+        if constexpr (Caster::IsClass)
+            out = caster.operator Output();
+        else
+            out = std::move(caster.operator Output&&());
+
+        return true;
+    }
+
+    return false;
+}
+
+template <typename T, typename Derived>
 T cast(const detail::api<Derived> &value, bool convert = true) {
     if constexpr (std::is_same_v<T, void>) {
         return;
@@ -382,8 +407,8 @@ T cast(const detail::api<Derived> &value, bool convert = true) {
 
 template <typename T>
 object cast(T &&value, rv_policy policy = rv_policy::automatic_reference) {
-    handle h = detail::make_caster<T>::from_cpp(
-        (detail::forward_t<T>) value, detail::infer_policy<T>(policy), nullptr);
+    handle h = detail::make_caster<T>::from_cpp((detail::forward_t<T>) value,
+                                                policy, nullptr);
     if (!h.is_valid())
         detail::raise_cast_error();
     return steal(h);
@@ -401,9 +426,9 @@ tuple make_tuple(Args &&...args) {
     PyObject *o = result.ptr();
 
     (NB_TUPLE_SET_ITEM(o, nargs++,
-                      detail::make_caster<Args>::from_cpp(
-                          (detail::forward_t<Args>) args,
-                          detail::infer_policy<Args>(policy), nullptr).ptr()),
+                       detail::make_caster<Args>::from_cpp(
+                           (detail::forward_t<Args>) args, policy, nullptr)
+                           .ptr()),
      ...);
 
     detail::tuple_check(o, sizeof...(Args));
@@ -423,9 +448,25 @@ detail::accessor<Impl>& detail::accessor<Impl>::operator=(T &&value) {
 }
 
 template <typename T> void list::append(T &&value) {
-    object o = nanobind::cast(value);
+    object o = nanobind::cast((detail::forward_t<T>) value);
     if (PyList_Append(m_ptr, o.ptr()))
         detail::raise_python_error();
+}
+
+template <typename T> bool dict::contains(T&& key) const {
+    object o = nanobind::cast((detail::forward_t<T>) key);
+    int rv = PyDict_Contains(m_ptr, o.ptr());
+    if (rv == -1)
+        detail::raise_python_error();
+    return rv == 1;
+}
+
+template <typename T> bool mapping::contains(T&& key) const {
+    object o = nanobind::cast((detail::forward_t<T>) key);
+    int rv = PyMapping_HasKey(m_ptr, o.ptr());
+    if (rv == -1)
+        detail::raise_python_error();
+    return rv == 1;
 }
 
 NAMESPACE_END(NB_NAMESPACE)

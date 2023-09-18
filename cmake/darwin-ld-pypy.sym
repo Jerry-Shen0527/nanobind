@@ -43,6 +43,7 @@
 -U _PyPyCFunction_Check
 -U _PyPyCFunction_GetFunction
 -U _PyPyCFunction_Type
+-U _PyPyCFunction_NewEx
 -U _PyPyCMethod_New
 -U _PyPyCallIter_New
 -U _PyPyCallable_Check
@@ -266,6 +267,8 @@
 -U _PyPyFile_WriteString
 -U _PyPyFloat_AS_DOUBLE
 -U _PyPyFloat_AsDouble
+-U _PyPyFloat_Check
+-U _PyPyFloat_CheckExact
 -U _PyPyFloat_FromDouble
 -U _PyPyFloat_FromString
 -U _PyPyFloat_Type
@@ -555,6 +558,7 @@
 -U _PyPySet_Pop
 -U _PyPySet_Size
 -U _PyPySet_Type
+-U _PyPySlice_AdjustIndices
 -U _PyPySlice_GetIndices
 -U _PyPySlice_GetIndicesEx
 -U _PyPySlice_New
@@ -898,6 +902,7 @@
 -U __PyPyObject_GetDictPtr
 -U __PyPyObject_New
 -U __PyPyObject_NewVar
+-U __PyPyObject_Vectorcall
 -U __PyPyPyGC_AddMemoryPressure
 -U __PyPyPy_Free
 -U __PyPyPy_Malloc

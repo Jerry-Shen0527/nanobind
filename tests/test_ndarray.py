@@ -68,7 +68,7 @@ def test01_metadata():
 
 
 def test02_docstr():
-    assert t.get_shape.__doc__ == "get_shape(array: ndarray[]) -> list"
+    assert t.get_shape.__doc__ == "get_shape(array: ndarray[writable=False]) -> list"
     assert t.pass_uint32.__doc__ == "pass_uint32(array: ndarray[dtype=uint32]) -> None"
     assert t.pass_float32.__doc__ == "pass_float32(array: ndarray[dtype=float32]) -> None"
     assert t.pass_bool.__doc__ == "pass_bool(array: ndarray[dtype=bool]) -> None"
@@ -301,31 +301,9 @@ def test14_consume_numpy():
 
 @needs_numpy
 def test15_passthrough():
-    collect()
-    class wrapper:
-        def __init__(self, value):
-            self.value = value
-        def __dlpack__(self):
-            return self.value
-    dc = t.destruct_count()
-    a = t.return_dlpack()
+    a = t.ret_numpy()
     b = t.passthrough(a)
-    if hasattr(np, '_from_dlpack'):
-        y = np._from_dlpack(wrapper(b))
-    elif hasattr(np, 'from_dlpack'):
-        y = np.from_dlpack(wrapper(b))
-    else:
-        pytest.skip('your version of numpy is too old')
-
-    del a
-    del b
-    collect()
-    assert dc == t.destruct_count()
-    assert y.shape == (2, 4)
-    assert np.all(y == [[1, 2, 3, 4], [5, 6, 7, 8]])
-    del y
-    collect()
-    assert t.destruct_count() - dc == 1
+    assert a is b
 
     a = np.array([1,2,3])
     b = t.passthrough(a)
@@ -436,10 +414,190 @@ def test22_ro_array():
 
 @needs_numpy
 def test22_return_ro():
-    x = t.ret_numpy_const()
+    x = t.ret_numpy_const_ref()
     assert t.ret_numpy_const.__doc__  == 'ret_numpy_const() -> numpy.ndarray[dtype=float32, writable=False, shape=(2, 4)]'
     assert x.shape == (2, 4)
     assert np.all(x == [[1, 2, 3, 4], [5, 6, 7, 8]])
     with pytest.raises(ValueError) as excinfo:
         x[0,0] =1
     assert 'read-only' in str(excinfo.value)
+
+@needs_numpy
+def test23_check_numpy():
+    assert t.check(np.zeros(1))
+
+@needs_torch
+def test24_check_torch():
+    assert t.check(torch.zeros((1)))
+
+@needs_tensorflow
+def test25_check_tensorflow():
+    assert t.check(tf.zeros((1)))
+
+@needs_jax
+def test26_check_jax():
+    assert t.check(jnp.zeros((1)))
+
+@needs_numpy
+def test27_rv_policy():
+    def p(a):
+        return a.__array_interface__['data']
+
+    x1 = t.ret_numpy_const_ref()
+    x2 = t.ret_numpy_const_ref()
+    y1 = t.ret_numpy_const()
+    y2 = t.ret_numpy_const()
+
+    z1 = t.passthrough(y1)
+    z2 = t.passthrough(y2)
+    q1 = t.passthrough_copy(y1)
+    q2 = t.passthrough_copy(y2)
+
+    assert p(x1) == p(x2)
+    assert p(y1) != p(y2)
+
+    assert z1 is y1
+    assert z2 is y2
+    assert q1 is not y1
+    assert q2 is not y2
+    assert p(q1) != p(y1)
+    assert p(q2) != p(y2)
+
+@needs_numpy
+def test28_reference_internal():
+    collect()
+    dc = t.destruct_count()
+    c = t.Cls()
+
+    v1_a = c.f1()
+    v1_b = c.f1()
+    v2_a = c.f2()
+    v2_b = c.f2()
+    del c
+
+    assert np.all(v1_a == np.arange(10, dtype=np.float32))
+    assert np.all(v1_b == np.arange(10, dtype=np.float32))
+
+    v1_a += 1
+    v1_b += 2
+
+    assert np.all(v1_a == np.arange(10, dtype=np.float32) + 1)
+    assert np.all(v1_b == np.arange(10, dtype=np.float32) + 2)
+    del v1_a
+    del v1_b
+
+    assert np.all(v2_a == np.arange(10, dtype=np.float32))
+    assert np.all(v2_b == np.arange(10, dtype=np.float32))
+
+    v2_a += 1
+    v2_b += 2
+
+    assert np.all(v2_a == np.arange(10, dtype=np.float32) + 3)
+    assert np.all(v2_b == np.arange(10, dtype=np.float32) + 3)
+
+    del v2_a
+    collect()
+    assert t.destruct_count() == dc
+
+    del v2_b
+    collect()
+    dc += 1
+    assert t.destruct_count() == dc
+
+    for i in range(2):
+        c2 = t.Cls()
+
+        if i == 0:
+            v3_a = c2.f1_ri()
+            v3_b = c2.f1_ri()
+        else:
+            v3_a = c2.f2_ri()
+            v3_b = c2.f2_ri()
+        del c2
+
+        assert np.all(v3_a == np.arange(10, dtype=np.float32))
+        assert np.all(v3_b == np.arange(10, dtype=np.float32))
+
+        v3_a += 1
+        v3_b += 2
+
+        assert np.all(v3_a == np.arange(10, dtype=np.float32) + 3)
+        assert np.all(v3_b == np.arange(10, dtype=np.float32) + 3)
+        del v3_a
+
+        collect()
+        assert t.destruct_count() == dc
+
+        del v3_b
+        collect()
+        dc += 1
+        assert t.destruct_count() == dc
+
+    c3 = t.Cls()
+    c3_t = (c3,)
+    with pytest.raises(RuntimeError) as excinfo:
+        c3.f3_ri(c3_t)
+
+    msg = 'nanobind::detail::ndarray_wrap(): reference_internal policy cannot be applied (ndarray already has an owner)'
+    assert msg in str(excinfo.value)
+
+@needs_numpy
+def test29_force_contig_pytorch():
+    a = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
+    b = t.make_contig(a)
+    assert b is a
+    a = a.T
+    b = t.make_contig(a)
+    assert b is not a
+    assert np.all(b == a)
+
+@needs_torch
+@pytest.mark.filterwarnings
+def test30_force_contig_pytorch():
+    a = torch.tensor([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
+    b = t.make_contig(a)
+    assert b is a
+    a = a.T
+    b = t.make_contig(a)
+    assert b is not a
+    assert torch.all(b == a)
+
+@needs_numpy
+def test31_view():
+    # 1
+    x1 = np.array([[1,2],[3,4]], dtype=np.float32)
+    x2 = np.array([[1,2],[3,4]], dtype=np.float64)
+    assert np.allclose(x1, x2)
+    t.fill_view_1(x1)
+    assert np.allclose(x1, x2*2)
+    t.fill_view_1(x2)
+    assert np.allclose(x1, x2*2)
+
+    #2
+    x1 = np.zeros((3, 4), dtype=np.float32, order='C')
+    x2 = np.zeros((3, 4), dtype=np.float32, order='F')
+    t.fill_view_2(x1)
+    t.fill_view_2(x2)
+    x3 = np.zeros((3, 4), dtype=np.float32, order='C')
+    t.fill_view_3(x3)
+    x4 = np.zeros((3, 4), dtype=np.float32, order='F')
+    t.fill_view_4(x4)
+
+    assert np.all(x1 == x2) and np.all(x2 == x3) and np.all(x3 == x4)
+
+@needs_numpy
+def test32_half():
+    if not hasattr(t, 'ret_numpy_half'):
+        pytest.skip('half precision test is missing')
+    x = t.ret_numpy_half()
+    assert x.dtype == np.float16
+    assert x.shape == (2, 4)
+    assert np.all(x == [[1, 2, 3, 4], [5, 6, 7, 8]])
+
+@needs_numpy
+def test33_cast():
+    a = t.cast(False)
+    b = t.cast(True)
+    assert a.ndim == 0 and b.ndim == 0
+    assert a.dtype == np.int32 and b.dtype == np.float32
+    assert a == 1 and b == 1

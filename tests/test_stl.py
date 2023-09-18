@@ -732,6 +732,9 @@ def test65_class_with_movable_field(clean):
 def test66_replace_extension():
     from pathlib import Path
 
+    if not hasattr(t, 'replace_extension'):
+        pytest.skip('filesystem tests not compiled')
+
     filename = Path("test.txt")
     assert t.replace_extension(filename, ".obj") == filename.with_suffix(".obj")
 
@@ -752,3 +755,7 @@ def test66_replace_extension():
     assert t.parent_path(PseudoStrPath()) == Path("foo")
     assert t.parent_path(PseudoBytesPath()) == Path("foo")
 
+def test67_vector_bool():
+    bool_vector = [True, False, True, False]
+    result = t.flip_vector_bool(bool_vector)
+    assert result == [not x for x in bool_vector]

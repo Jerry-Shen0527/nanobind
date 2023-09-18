@@ -157,8 +157,8 @@ the desired type.
 
 .. code-block:: cpp
 
-   nb::class_<MyType>(m, "MyType")
-       .def(nb::init([](int) { return MyType(...); }));
+   py::class_<MyType>(m, "MyType")
+       .def(py::init([](int) { return MyType(...); }));
 
 Unfortunately, the implementation of this feature was quite complex and
 often required further internal calls to the move or copy
@@ -177,6 +177,15 @@ with the Python object for reasons of efficiency). The lambda function can
 then either run an in-place constructor and return normally (in which case
 the instance is assumed to be correctly constructed) or fail by raising an
 exception.
+
+To turn an existing factory function into a constructor, you will need to
+combine the above pattern with an invocation of the move/copy-constructor,
+e.g.:
+
+.. code-block:: cpp
+
+   nb::class_<MyType>(m, "MyType")
+       .def("__init__", [](MyType *t) { new (t) MyType(MyType::create()); });
 
 Implicit conversions
 --------------------
@@ -273,17 +282,31 @@ changes are needed:
   a Python exception, the function should *leave the error set* (note the
   asymmetry compared to ``from_python()``) and return ``nullptr``.
 
-Both functions must be marked as ``noexcept``.
-
 Note that the cleanup list is only available when ``from_python()`` or
 ``from_cpp()`` are called as part of function dispatch, while usage by
 :cpp:func:`nb::cast() <cast>` sets ``cleanup`` to ``nullptr``. This case should
 be handled gracefully by refusing the conversion if the cleanup list is
 absolutely required.
 
+Type casters may not raise C++ exceptions. Both ``from_python()`` and
+``from_cpp()`` must be annotated with ``noexcept``. Exceptions or failure
+conditions caused by a conversion should instead be caught *within* the
+function body and handled as follows:
+
+- ``from_python()``: return ``false``. That's it. (Failed Python to C++
+  conversion occur all the time while dispatching calls, causing nanobind
+  to simply move to the next function overload. Dedicated error reporting would
+  add undesirable overheads). In case of a severe internal error, use the
+  CPython warning API (e.g., ``PyErr_Warn()``) to notify the user.
+
+- ``from_cpp()``: a failure here is more serious, since a return value of a
+  successfully evaluated cannot be converted, causing the call to fail. To
+  provide further detail, use the CPython error API (e.g., ``PyErr_Format()``)
+  and return an invalid handle (``return nb::handle();``).
+
 The ``std::pair<T1, T2>`` type caster (`link
 <https://github.com/wjakob/nanobind/blob/master/include/nanobind/stl/pair.h>`_)
-may be useful as a reference for these changes.
+may be useful as a starting point of custom implementations.
 
 .. _removed:
 
@@ -320,17 +343,14 @@ Removed features include:
 - ○ **Compilation**: workarounds for buggy or non-standard-compliant
   compilers were removed and will not be reintroduced.
 - ○ The ``options`` class for customizing docstring generation was removed.
-- ● NumPy integration was replaced by a more general
-  :cpp:class:`nb::ndarray\<..\> <nanobind::ndarray>` integration that supports
-  CPU/GPU tensors produced by various frameworks (NumPy, PyTorch,
-  TensorFlow, JAX, ..).
-- ● Buffer protocol functionality (``.def_buffer()``) was removed in favor of
-  the :cpp:class:`nb::ndarray\<..\> <nanobind::ndarray>` interface.
-- ● Nested exceptions are not supported.
-- ● Features to facilitate pickling and unpickling were removed.
+- ○ The NumPy array class (``py::array``) was removed in exchange for a more
+  powerful alternative (:cpp:class:`nb::ndarray\<..\> <nanobind::ndarray>`)
+  that additionally supports CPU/GPU tensors produced by various frameworks
+  (NumPy, PyTorch, TensorFlow, JAX, etc.). Its API is not compatible with
+  pybind11, however.
+- ● Buffer protocol binding (``.def_buffer()``) was removed in favor of
+  :cpp:class:`nb::ndarray\<..\> <nanobind::ndarray>`.
 - ● Support for evaluating Python code strings was removed.
-- ● Type casters for time/date conversion (``pybind11/chrono.h``) haven't been
-  ported yet.
 
 Bullet points marked with ● may be reintroduced eventually, but this will
 need to be done in a careful opt-in manner that does not affect code

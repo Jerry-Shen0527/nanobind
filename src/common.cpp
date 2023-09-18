@@ -13,6 +13,27 @@
 NAMESPACE_BEGIN(NB_NAMESPACE)
 NAMESPACE_BEGIN(detail)
 
+NB_NOINLINE static builtin_exception
+create_exception(exception_type type, const char *fmt, va_list args_) {
+    char buf[512];
+    va_list args;
+
+    va_copy(args, args_);
+    int size = vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+
+    if (size < (int) sizeof(buf)) {
+        return builtin_exception(type, buf);
+    } else {
+        scoped_pymalloc<char> temp(size + 1);
+
+        va_copy(args, args_);
+        vsnprintf(temp.get(), size + 1, fmt, args);
+        va_end(args);
+
+        return builtin_exception(type, temp.get());
+    }
+}
 
 #if defined(__GNUC__)
     __attribute__((noreturn, __format__ (__printf__, 1, 2)))
@@ -20,23 +41,26 @@ NAMESPACE_BEGIN(detail)
     [[noreturn]]
 #endif
 void raise(const char *fmt, ...) {
-    char buf[512];
     va_list args;
-
     va_start(args, fmt);
-    int size = vsnprintf(buf, sizeof(buf), fmt, args);
+    builtin_exception err =
+        create_exception(exception_type::runtime_error, fmt, args);
     va_end(args);
+    throw err;
+}
 
-    if (size < (int) sizeof(buf))
-        throw std::runtime_error(buf);
-
-    scoped_pymalloc<char> temp(size + 1);
-
+#if defined(__GNUC__)
+    __attribute__((noreturn, __format__ (__printf__, 1, 2)))
+#else
+    [[noreturn]]
+#endif
+void raise_type_error(const char *fmt, ...) {
+    va_list args;
     va_start(args, fmt);
-    vsnprintf(temp.get(), size + 1, fmt, args);
+    builtin_exception err =
+        create_exception(exception_type::type_error, fmt, args);
     va_end(args);
-
-    throw std::runtime_error(temp.get());
+    throw err;
 }
 
 /// Abort the process with a fatal error
@@ -179,7 +203,7 @@ fail:
 // ========================================================================
 
 size_t obj_len(PyObject *o) {
-    Py_ssize_t res = PyObject_Length(o);
+    Py_ssize_t res = PyObject_Size(o);
     if (res < 0)
         raise_python_error();
     return (size_t) res;
@@ -195,9 +219,9 @@ size_t obj_len_hint(PyObject *o) noexcept {
     return (size_t) res;
 #else
     PyTypeObject *tp = Py_TYPE(o);
-    lenfunc l = (lenfunc) PyType_GetSlot(tp, Py_sq_length);
+    lenfunc l = (lenfunc) type_get_slot(tp, Py_sq_length);
     if (!l)
-        l = (lenfunc) PyType_GetSlot(tp, Py_mp_length);
+        l = (lenfunc) type_get_slot(tp, Py_mp_length);
 
     if (l) {
         Py_ssize_t res = l(o);
@@ -272,11 +296,11 @@ PyObject *obj_vectorcall(PyObject *base, PyObject *const *args, size_t nargsf,
     if (method_call) {
         PyObject *self = PyObject_GetAttr(args[0], /* name = */ base);
         if (self) {
-            res = _PyObject_Vectorcall(self, args + 1, nargsf - 1, kwnames);
+            res = _PyObject_Vectorcall(self, (PyObject **) args + 1, nargsf - 1, kwnames);
             Py_DECREF(self);
         }
     } else {
-        res = _PyObject_Vectorcall(base, args, nargsf, kwnames);
+        res = _PyObject_Vectorcall(base, (PyObject **) args, nargsf, kwnames);
     }
 #else
     res = (method_call ? PyObject_VectorcallMethod
@@ -519,6 +543,29 @@ PyObject *int_from_obj(PyObject *o) {
     return result;
 }
 
+PyObject *float_from_obj(PyObject *o) {
+    PyObject *result = PyNumber_Float(o);
+    if (!result)
+        raise_python_error();
+    return result;
+}
+
+// ========================================================================
+
+PyObject *tuple_from_obj(PyObject *o) {
+    PyObject *result = PySequence_Tuple(o);
+    if (!result)
+        raise_python_error();
+    return result;
+}
+
+PyObject *list_from_obj(PyObject *o) {
+    PyObject *result = PySequence_List(o);
+    if (!result)
+        raise_python_error();
+    return result;
+}
+
 // ========================================================================
 
 PyObject **seq_get(PyObject *seq, size_t *size_out, PyObject **temp_out) noexcept {
@@ -709,12 +756,11 @@ PyObject **seq_get_with_size(PyObject *seq, size_t size,
 static void property_install_impl(PyTypeObject *tp, PyObject *scope,
                                   const char *name, PyObject *getter,
                                   PyObject *setter) {
-    const nb_internals &internals = internals_get();
     PyObject *m = getter ? getter : setter;
     object doc = none();
 
-    if (m && (Py_TYPE(m) == internals.nb_func ||
-              Py_TYPE(m) == internals.nb_method)) {
+    if (m && (Py_TYPE(m) == internals->nb_func ||
+              Py_TYPE(m) == internals->nb_method)) {
         func_data *f = nb_func_data(m);
         if (f->flags & (uint32_t) func_flags::has_doc)
             doc = str(f->doc);
@@ -957,11 +1003,11 @@ void decref_checked(PyObject *o) noexcept {
 // ========================================================================
 
 void set_leak_warnings(bool value) noexcept {
-    internals_get().print_leak_warnings = value;
+    internals->print_leak_warnings = value;
 }
 
 void set_implicit_cast_warnings(bool value) noexcept {
-    internals_get().print_implicit_cast_warnings = value;
+    internals->print_implicit_cast_warnings = value;
 }
 
 // ========================================================================

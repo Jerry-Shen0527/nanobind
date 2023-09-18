@@ -4,17 +4,19 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/pair.h>
 #include <nanobind/stl/shared_ptr.h>
+#include <nanobind/stl/tuple.h>
 #include <memory>
 #include <cstring>
 #include <vector>
 #include <nanobind/stl/detail/traits.h>
+#include "inter_module.h"
 
 namespace nb = nanobind;
 using namespace nb::literals;
 
 static int default_constructed = 0, value_constructed = 0, copy_constructed = 0,
            move_constructed = 0, copy_assigned = 0, move_assigned = 0,
-           destructed = 0;
+           destructed = 0, pickled = 0, unpickled = 0;
 
 struct Struct;
 std::unique_ptr<Struct> struct_tmp;
@@ -31,7 +33,9 @@ struct Struct {
     ~Struct() { destructed++; }
 
     int value() const { return i; }
+    int getstate() const { ++pickled; return i; }
     void set_value(int value) { i = value; }
+    void setstate(int value) { unpickled++; i = value; }
 
     static int static_test(int) { return 1; }
     static int static_test(float) { return 2; }
@@ -119,6 +123,8 @@ NB_MODULE(test_classes_ext, m) {
         .def("set_value", &Struct::set_value, "value"_a)
         .def("self", &Struct::self, nb::rv_policy::none)
         .def("none", [](Struct &) -> const Struct * { return nullptr; })
+        .def("__getstate__", &Struct::getstate)
+        .def("__setstate__", &Struct::setstate)
         .def_static("static_test", nb::overload_cast<int>(&Struct::static_test))
         .def_static("static_test", nb::overload_cast<float>(&Struct::static_test))
         .def_static("create_move", &Struct::create_move)
@@ -127,7 +133,6 @@ NB_MODULE(test_classes_ext, m) {
         .def_static("create_copy", &Struct::create_copy,
                     nb::rv_policy::copy)
         .def_static("create_take", &Struct::create_take);
-
 
     if (!nb::type<Struct>().is(cls))
         nb::detail::raise("type lookup failed!");
@@ -146,6 +151,8 @@ NB_MODULE(test_classes_ext, m) {
         d["copy_assigned"] = copy_assigned;
         d["move_assigned"] = move_assigned;
         d["destructed"] = destructed;
+        d["pickled"] = pickled;
+        d["unpickled"] = unpickled;
         return d;
     });
 
@@ -157,6 +164,8 @@ NB_MODULE(test_classes_ext, m) {
         copy_assigned = 0;
         move_assigned = 0;
         destructed = 0;
+        pickled = 0;
+        unpickled = 0;
     });
 
     // test06_big
@@ -412,13 +421,19 @@ NB_MODULE(test_classes_ext, m) {
         if (!nb::inst_ready(py_inst))
             throw std::runtime_error("Internal error! (7)");
 
-        nb::object py_inst_3 = nb::inst_wrap(py_type, new Struct(345));
-        if (!(nb::inst_check(py_inst_3) && py_inst_3.type().is(py_type) &&
-              !nb::inst_ready(py_inst_3)))
-            throw std::runtime_error("Internal error! (2)");
-        nb::inst_mark_ready(py_inst_3);
+        nb::handle py_type_pair = nb::type<PairStruct>();
+        PairStruct *ps = new PairStruct{Struct(123), Struct(456)};
+        nb::object py_inst_3 = nb::inst_take_ownership(py_type_pair, ps);
+        if (!(nb::inst_check(py_inst_3) && py_inst_3.type().is(py_type_pair) &&
+              nb::inst_state(py_inst_3) == std::make_pair(true, true)))
+            throw std::runtime_error("Internal error! (8)");
 
-        return nb::make_tuple(py_inst, py_inst_2, py_inst_3);
+        nb::object py_inst_4 = nb::inst_reference(py_type, &ps->s1, py_inst_3);
+        if (!(nb::inst_check(py_inst_4) && py_inst_4.type().is(py_type) &&
+              nb::inst_state(py_inst_4) == std::make_pair(true, false)))
+            throw std::runtime_error("Internal error! (9)");
+
+        return nb::make_tuple(py_inst, py_inst_2, py_inst_3, py_inst_4);
     });
 
     // test22_handle_t
@@ -477,4 +492,42 @@ NB_MODULE(test_classes_ext, m) {
     m.def("polymorphic_factory_2", []() { return (PolymorphicBase *) new AnotherPolymorphicSubclass(); });
     m.def("factory", []() { return (Base *) new Subclass(); });
     m.def("factory_2", []() { return (Base *) new AnotherSubclass(); });
+
+    m.def("check_shared", [](Shared *) { });
+
+    m.def("try_cast_1", [](nb::handle h) {
+        Struct s;
+        bool rv = nb::try_cast<Struct>(h, s);
+        return std::make_pair(rv, std::move(s));
+    });
+
+    m.def("try_cast_2", [](nb::handle h) {
+        Struct s;
+        Struct &s2 = s;
+        bool rv = nb::try_cast<Struct &>(h, s2);
+        return std::make_pair(rv, std::move(s2));
+    });
+
+    m.def("try_cast_3", [](nb::handle h) {
+        Struct *sp = nullptr;
+        bool rv = nb::try_cast<Struct *>(h, sp);
+        return std::make_pair(rv, sp);
+    }, nb::rv_policy::none);
+
+    m.def("try_cast_4", [](nb::handle h) {
+        int i = 0;
+        bool rv = nb::try_cast<int>(h, i);
+        return std::make_pair(rv, i);
+    });
+
+#if !defined(Py_LIMITED_API)
+    m.def("test_slots", []() {
+        nb::object wrapper_tp = nb::module_::import_("test_classes_ext").attr("Wrapper");
+        return nb::make_tuple(
+            nb::type_get_slot(wrapper_tp, Py_tp_traverse) == wrapper_tp_traverse,
+            nb::type_get_slot(&PyLong_Type, Py_tp_init) == PyLong_Type.tp_init,
+            nb::type_get_slot(&PyLong_Type, Py_nb_add) == PyLong_Type.tp_as_number->nb_add
+        );
+    });
+#endif
 }

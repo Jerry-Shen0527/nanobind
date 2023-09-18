@@ -7,6 +7,8 @@
 // Silence warnings that MSVC reports in robin_*.h
 #  pragma warning(disable: 4127) // conditional expression is constant
 #  pragma warning(disable: 4324) // structure was padded due to alignment specifier
+#  pragma warning(disable: 4293) // shift count negative or too big  <-- erroneously raised in a constexpr-disabled block
+#  pragma warning(disable: 4310) // cast truncates constant value <-- erroneously raised in a constexpr-disabled block
 #endif
 
 #include <nanobind/nanobind.h>
@@ -48,25 +50,30 @@ struct nb_inst { // usually: 24 bytes
      * relative offset to a pointer that must be dereferenced to get to the
      * instance data. 'direct' is 'true' in the former case.
      */
-    bool direct : 1;
+    uint32_t direct : 1;
 
     /// Is the instance data co-located with the Python object?
-    bool internal : 1;
+    uint32_t internal : 1;
 
     /// Is the instance properly initialized?
-    bool ready : 1;
+    uint32_t ready : 1;
 
     /// Should the destructor be called when this instance is GCed?
-    bool destruct : 1;
+    uint32_t destruct : 1;
 
     /// Should nanobind call 'operator delete' when this instance is GCed?
-    bool cpp_delete : 1;
+    uint32_t cpp_delete : 1;
 
     /// Does this instance hold reference to others? (via internals.keep_alive)
-    bool clear_keep_alive : 1;
+    uint32_t clear_keep_alive : 1;
+
+    /// Does this instance use intrusive reference counting?
+    uint32_t intrusive : 1;
+
+    uint32_t unused: 25;
 };
 
-static_assert(sizeof(nb_inst) == sizeof(PyObject) + sizeof(void *));
+static_assert(sizeof(nb_inst) == sizeof(PyObject) + sizeof(uint32_t) * 2);
 
 /// Python object representing a bound C++ function
 struct nb_func {
@@ -94,12 +101,20 @@ struct nb_bound_method {
 struct ptr_hash {
     size_t operator()(const void *p) const {
         uintptr_t v = (uintptr_t) p;
-        // fmix64 from MurmurHash by Austin Appleby (public domain)
-        v ^= v >> 33;
-        v *= (uintptr_t) 0xff51afd7ed558ccdull;
-        v ^= v >> 33;
-        v *= (uintptr_t) 0xc4ceb9fe1a85ec53ull;
-        v ^= v >> 33;
+        // fmix32/64 from MurmurHash by Austin Appleby (public domain)
+        if constexpr (sizeof(void *) == 4) {
+            v ^= v >> 16;
+            v *= 0x85ebca6b;
+            v ^= v >> 13;
+            v *= 0xc2b2ae35;
+            v ^= v >> 16;
+        } else {
+            v ^= v >> 33;
+            v *= (uintptr_t) 0xff51afd7ed558ccdull;
+            v ^= v >> 33;
+            v *= (uintptr_t) 0xc4ceb9fe1a85ec53ull;
+            v ^= v >> 33;
+        }
         return (size_t) v;
     }
 };
@@ -231,31 +246,19 @@ struct nb_internals {
 
 /// Convenience macro to potentially access cached functions
 #if defined(Py_LIMITED_API)
-#  define NB_SLOT(internals, type, name) internals.type##_##name
+#  define NB_SLOT(type, name) internals->type##_##name
 #else
-#  define NB_SLOT(internals, type, name) type.name
+#  define NB_SLOT(type, name) type.name
 #endif
 
-struct current_method {
-    const char *name;
-    PyObject *self;
-};
-
-extern NB_THREAD_LOCAL current_method current_method_data;
-extern nb_internals *internals_p;
-extern nb_internals *internals_fetch();
-
-inline nb_internals &internals_get() noexcept {
-    nb_internals *ptr = internals_p;
-    if (NB_UNLIKELY(!ptr))
-        ptr = internals_fetch();
-    return *ptr;
-}
+extern nb_internals *internals;
+extern PyTypeObject *nb_meta_cache;
 
 extern char *type_name(const std::type_info *t);
 
 // Forward declarations
-extern PyObject *inst_new_impl(PyTypeObject *tp, void *value);
+extern PyObject *inst_new_ext(PyTypeObject *tp, void *value);
+extern PyObject *inst_new_int(PyTypeObject *tp);
 extern PyTypeObject *nb_static_property_tp() noexcept;
 
 /// Fetch the nanobind function record from a 'nb_func' instance
@@ -276,10 +279,7 @@ NB_INLINE type_data *nb_type_data(PyTypeObject *o) noexcept{
     #endif
 }
 
-extern PyObject *nb_type_name(PyTypeObject *o) noexcept;
-inline PyObject *nb_inst_name(PyObject *o) noexcept {
-        return nb_type_name(Py_TYPE(o));
-}
+extern PyObject *nb_type_name(PyObject *o) noexcept;
 
 inline void *inst_ptr(nb_inst *self) {
     void *ptr = (void *) ((intptr_t) self + self->offset);

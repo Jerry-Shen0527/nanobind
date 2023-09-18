@@ -15,28 +15,204 @@ case, both modules must use the same nanobind ABI version, or they will be
 isolated from each other. Releases that don't explicitly mention an ABI version
 below inherit that of the preceding release.
 
-Version 1.3.0 (TBD)
+Version 1.6.0 (TBA)
 -------------------
 
+* Several :cpp:class:`nb::ndarray\<..\> <ndarray>` improvements: 
+
+  1. CPU loops involving nanobind ndarrays weren't getting properly vectorized.
+     This release of nanobind adds *views*, which provide an efficient
+     abstraction that enables better code generation. See the documentation
+     section on :ref:`array views <ndarray-views>` for details.
+     (commit `8f602e
+     <https://github.com/wjakob/nanobind/commit/8f602e187b0634e1df13ba370352cf092e9042c0>`__).
+
+  2. Added support for nonstandard arithmetic types (e.g., ``__int128`` or
+     ``__fp16``) in ndarrays. See the :ref:`documentation section
+     <ndarray-nonstandard>` for details. (commit `49eab2
+     <https://github.com/wjakob/nanobind/commit/49eab2845530f84a1f029c5c1c5541ab3c1f9adc>`__).
+
+  3. Shape constraints like :py:class:`nb::shape\<nb::any, nb::any, nb::any\>
+     <shape>` are tedious to write. Now, there is a shorter form:
+     :py:class:`nb::ndim\<3\> <ndim>`. (commit `1350a5
+     <https://github.com/wjakob/nanobind/commit/1350a5e15b28e80ffc2130a779f3b8c559ddb620>`__).
+
+  4. Added an explicit constructor that can be used to add or remove ndarray
+     constraints. (commit `a1ac207
+     <https://github.com/wjakob/nanobind/commit/a1ac207ab82206b8e50fe456f577c02270014fb3>`__).
+
+* Added the wrapper class :cpp:class:`nb::weakref <weakref>`. (commit `78887f
+  <https://github.com/wjakob/nanobind/commit/78887fc167196a7568a5cef8f8dfbbee09aa7dc4>`__).
+
+* Added the methods :cpp:func:`nb::dict::contains() <dict::contains>` and
+  :cpp:func:`nb::mapping::contains() <mapping::contains>` to the Python type
+  wrappers. (commit `64d87a
+  <https://github.com/wjakob/nanobind/commit/64d87ae01355c247123613f140cef8e71bc98fc7>`__).
+
+Version 1.5.2 (Aug 24, 2023)
+----------------------------
+
+* Fixed a severe issue with inheritance of the ``Py_TPFLAGS_HAVE_GC`` flag
+  affecting classes that derive from other classes with a
+  :cpp:class:`nb::dynamic_attr <dynamic_attr>` annotation. (issue `#279
+  <https://github.com/wjakob/nanobind/issues/279>`__, commit `dbedad
+  <https://github.com/wjakob/nanobind/commit/dbedadc294a7529bf401f01dbc97d4b47b677bc9>`__).
+* Implicit conversion of nd-arrays to conform to contiguity constraints such as
+  :cpp:class:`c_contig` and :cpp:class:`f_contig` previously failed in some
+  cases that are now addressed. (issue `#278
+  <https://github.com/wjakob/nanobind/issues/278>`__ commit `ed929b
+  <https://github.com/wjakob/nanobind/commit/ed929b7c6789e7d5e1760d515bc23ce6f7cedf8c>`__).
+
+Version 1.5.1 (Aug 23, 2023)
+----------------------------
+
+* Fixed serious reference counting issue introduced in nanobind version 1.5.0,
+  which affected the functions :cpp:func:`python_error::traceback()` and
+  :cpp:func:`python_error::what()`, causing undefined behavior via
+  use-after-free. Also addressed an unrelated minor UB sanitizer warning.
+  (issue `#277 <https://github.com/wjakob/nanobind/issues/277>`__, commits
+  `30d30c
+  <https://github.com/wjakob/nanobind/commit/30d30caaa3e834122944b28833b9c0315ef19a5d>`__
+  and `c48b18
+  <https://github.com/wjakob/nanobind/commit/c48b180834b4929f2f77ce658f2a50ee78482fb7>`__).
+* Extended the internal data structure tag so that it isolates different MSVC
+  versions from each other (they are often not ABI compatible, see pybind11
+  issue `#4779 <https://github.com/pybind/pybind11/pull/4779>`__). This means
+  that nanobind 1.5.1 effectively bumps the ABI version to "10.5" when
+  compiling for MSVC, and the internals will be isolated from extensions built
+  with nanobind v1.5.0 or older. (commit `c7f3cd
+  <https://github.com/wjakob/nanobind/commit/c7f3cd6a7023dec55c63b995ba50c9f5d4b9147a>`__).
+* Incorporated fixes so that nanobind works with PyPy 3.10. (commits `fb5508
+  <https://github.com/wjakob/nanobind/commit/fb5508955e1b1455adfe1372b49748ba706b4d87>`__
+  and `2ed10a
+  <https://github.com/wjakob/nanobind/commit/2ed108a73bd5fbe0e1c43a8db07e40a165fc265f>`__).
+* Fixed type caster for ``std::vector<bool>``. (PR `#256
+  <https://github.com/wjakob/nanobind/pull/256>`__).
+* Fixed compilation in debug mode on MSVC. (PR `#253
+  <https://github.com/wjakob/nanobind/pull/253>`__).
+
+Version 1.5.0 (Aug 7, 2023)
+---------------------------
+
+* Support for creating :ref:`chained exceptions <exception_chaining>` via the
+  :cpp:func:`nb::raise_from() <chain_error>` and :cpp:func:`nb::chain_error()
+  <chain_error>` functions. (commits `041520
+  <https://github.com/wjakob/nanobind/commit/0415208e83885dba038516d86c2f4cca5f81df5f>`__
+  and `beb699
+  <https://github.com/wjakob/nanobind/commit/beb6999b7ce92ba5e3aaea60cd7f2acc9ba3cdc3>`__).
+* Many improvements to the handling of return value policies in
+  :cpp:class:`nb::ndarray\<..\> <ndarray>` to avoid unnecessary copies. (commit `ffd22b
+  <https://github.com/wjakob/nanobind/commit/ffd22b069ba95a546baeca0bdb6711fb9059cad8>`__,
+  `a79575
+  <https://github.com/wjakob/nanobind/commit/a79575165134c72c0a26e46772290d0404eae7a3>`__,
+  and `6f0c3f
+  <https://github.com/wjakob/nanobind/commit/6f0c3feaf088e78c75f2abee90164f20446eba08>`__).
+* The :cpp:class:`nb::ndarray\<..\> <ndarray>` class now has an additional
+  convenience constructor that takes the shape and (optionally) strides using
+  ``std::initializer_list``. (commit `de1117
+  <https://github.com/wjakob/nanobind/commit/de111766b21fe893a41cd4614a346b0da251f7f2>`__).
+* Added a non-throwing function :cpp:func:`nb::try_cast() <try_cast>` as an
+  alternative to :cpp:func:`nb::cast() <cast>`. (commit `6ca852
+  <https://github.com/wjakob/nanobind/commit/6ca852cc881ee7cd35b674135030709a6b57b8f6>`__).
+* The ``nb::list`` and ``nb::tuple`` default constructors now construct an empty list/tuple instead
+  of an invalid null-initialized handle.
+  (commit `506185 <https://github.com/wjakob/nanobind/commit/506185dca821c9cc1268c33b4cc867ae20f0fc4b>`__)
+* New low-level interface for wrapping existing C++ instances via
+  :cpp:func:`nb::inst_take_ownership() <inst_take_ownership>`
+  :cpp:func:`nb::inst_reference() <inst_reference>`. Also added convenience
+  functions to replace the contents of an instance with that of another.
+  :cpp:func:`nb::inst_replace_copy() <inst_replace_copy>` along with
+  :cpp:func:`nb::inst_replace_move() <inst_replace_move>` (commit `1c462d
+  <https://github.com/wjakob/nanobind/commit/1c462d6e3a112e49686acf33c9cb6e34f996dd6b>`__).
+* Added a low-level abstraction around :cpp:func:`nb::type_get_slot()
+  <type_get_slot>` around ``PyType_GetSlot``, but with more consistent behavior
+  across Python versions. (commit `d555e9
+  <https://github.com/wjakob/nanobind/commit/d555e9de1c45394f5be5d62dc999c603d651c8c4>`__).
+* The :cpp:func:`nb::list::append() <list::append>` method now performs perfect
+  forwarding. (commit `2219d0
+  <https://github.com/wjakob/nanobind/commit/2219d0b0fec5e6cc4fce96bc3dbad6bfa148a57d>`__).
+* Inference of ``automatic*`` return value policy was entirely moved to the
+  base C++ class type caster. (commit `1ff9df
+  <https://github.com/wjakob/nanobind/commit/1ff9df03fb56a16f56854b4cecd1f388f73d3b53>`__).
+* Switch to the new Python 3.12 error status API if available. (commit `36751c
+  <https://github.com/wjakob/nanobind/commit/36751cb05994a96a3801bf511c846a7bc68e2f09>`__).
+* Various minor fixes and improvements.
+* ABI version 10.
+
+Version 1.4.0 (June 8, 2023)
+----------------------------
+
+* Improved the efficiency of the function dispatch loop. (PR `#227
+  <https://github.com/wjakob/nanobind/pull/227>`__).
+* Significant improvements to the Eigen type casters (generalized stride
+  handling to avoid unnecessary copies, support for conversion via
+  ``nb::cast()``, many refinements to the  ``Eigen::Ref<T>`` interface). (PR
+  `#215 <https://github.com/wjakob/nanobind/pull/215>`__).
+* Added a ``NB_DOMAIN`` parameter to :cmake:command:`nanobind_add_module` which
+  can isolate extensions from each other to avoid binding clashes. See the
+  associated :ref:`FAQ entry <type-visibility>` for details. (commit `977119
+  <https://github.com/wjakob/nanobind/commit/977119c4797db7decf8064cf118afde768ff8fab>`__).
+* Reduced the severity of nanobind encountering a duplicate type binding
+  (commits `f3b0e6
+  <https://github.com/wjakob/nanobind/commit/f3b0e6cbd69a4adcdc31dbe0b844370b1b60dbcf>`__,
+  and `2c9124
+  <https://github.com/wjakob/nanobind/commit/2c9124bbbe736881fa8f9f33ea7817c98b43bf8b>`__).
+* Support for pickling/unpickling nanobind objects. (commit `59843e
+  <https://github.com/wjakob/nanobind/commit/59843e09bc6e8f2b0338829a44cf71e25f76cba3>`__).
+* ABI version 9.
+
+Version 1.3.2 (June 2, 2023)
+----------------------------
+
+* Fixed compilation on 32 bit processors (only ``i686`` tested so far).
+  (PR `#224 <https://github.com/wjakob/nanobind/pull/224>`__).
+* Fixed compilation on PyPy 3.8. (commit `cd8135
+  <https://github.com/wjakob/nanobind/commit/cd8135baa1da1213252272b5c9ecbf909e947597>`__).
+* Reduced binary bloat of musllinux wheels. (commit `f52513
+  <https://github.com/wjakob/nanobind/commit/f525139a80d173feaea5518e842aceeb6ceec5cf>`__).
+
+Version 1.3.1 (May 31, 2023)
+----------------------------
+
+* CMake build system improvements for stable ABI wheel generation. 
+  (PR `#222 <https://github.com/wjakob/nanobind/pull/222>`__).
+
+Version 1.3.0 (May 31, 2023)
+----------------------------
+
+This is a big release. The sections below cover added features, efficiency
+improvements, and miscellaneous fixes and improvements.
+
+New features
+^^^^^^^^^^^^
+* nanobind now supports binding types that inherit from
+  ``std::enable_shared_from_this<T>``. See the :ref:`advanced section
+  on object ownership <enable_shared_from_this>` for more details.
+  (PR `#212 <https://github.com/wjakob/nanobind/pull/212>`__).
 * Added a type caster between Python ``datetime``/``timedelta`` objects and
   C++ ``std::chrono::duration``/``std::chrono::time_point``, ported
   from pybind11. (PR `#175 <https://github.com/wjakob/nanobind/pull/175>`__).
-* Refined compiler and linker flags across platforms to ensure compact binaries
-  especially in ``NB_STATIC`` builds. (commit `5ead9f
-  <https://github.com/wjakob/nanobind/commit/5ead9ff348a2ef0df8231e6480607a5b0623a16b>`__)
-*  The :cpp:class:`nb::ndarray\<..\> <ndarray>` class can now use the buffer
+* The :cpp:class:`nb::ndarray\<..\> <ndarray>` class can now use the buffer
   protocol to receive and return arrays representing read-only memory. (PR
-  `#217 <https://github.com/wjakob/nanobind/pull/217>`__)t.
-* Reduced the number of exception-related exports to further crunch
-  ``libnanobind``. (commit `763962
-  <https://github.com/wjakob/nanobind/commit/763962b8ce76414148089ef6a68cff97d7cc66ce>`__).
+  `#217 <https://github.com/wjakob/nanobind/pull/217>`__).
+* Added :cpp:func:`nb::python_error::discard_as_unraisable()
+  <python_error::discard_as_unraisable>` as a wrapper around
+  ``PyErr_WriteUnraisable()``. (PR `#175
+  <https://github.com/wjakob/nanobind/pull/175>`__).
+
+Efficiency improvements:
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+* Reduced the per-instance overhead of nanobind by 1 pointer and simplified the
+  internal hash table types to crunch ``libnanobind``. (commit `de018d
+  <https://github.com/wjakob/nanobind/commit/de018db2d17905564703f1ade4aa201a22f8551f>`__).
 * Supplemental type data specified via :cpp:class:`nb::supplement\<T\>()
   <supplement>` is now stored directly within the type object instead of being
   referenced through an indirection. (commit `d82ca9
   <https://github.com/wjakob/nanobind/commit/d82ca9c14191e74dd35dd5bf15fc90f5230319fb>`__).
-* Reduced the per-instance overhead of nanobind by 1 pointer and simplified the
-  internal hash table types to crunch ``libnanobind``. (commit `de018d
-  <https://github.com/wjakob/nanobind/commit/de018db2d17905564703f1ade4aa201a22f8551f>`__).
+* Reduced the number of exception-related exports to further crunch
+  ``libnanobind``. (commit `763962
+  <https://github.com/wjakob/nanobind/commit/763962b8ce76414148089ef6a68cff97d7cc66ce>`__).
 * Reduced the size of nanobind type objects by 5 pointers. (PR `#194
   <https://github.com/wjakob/nanobind/pull/194>`__, `#195
   <https://github.com/wjakob/nanobind/pull/195>`__, and commit `d82ca9
@@ -53,18 +229,31 @@ Version 1.3.0 (TBD)
 * Added a small function cache to improve code generation in limited API
   builds. (commit `f0f4aa
   <https://github.com/wjakob/nanobind/commit/f0f42a564995ba3bd573282674d1a6d636a048c8>`__).
-* Added :cpp:func:`nb::python_error::discard_as_unraisable()
-  <python_error::discard_as_unraisable>` as a wrapper around
-  ``PyErr_WriteUnraisable()``. (PR `#175
-  <https://github.com/wjakob/nanobind/pull/175>`__).
+* Refined compiler and linker flags across platforms to ensure compact binaries
+  especially in ``NB_STATIC`` builds. (commit `5ead9f
+  <https://github.com/wjakob/nanobind/commit/5ead9ff348a2ef0df8231e6480607a5b0623a16b>`__)
+* nanobind enums now take advantage of :ref:`supplemental data <supplement>`
+  to improve the speed of object and name lookups. Note that this prevents
+  use of ``nb::supplement<T>()`` with enums for other purposes.
+  (PR `#195 <https://github.com/wjakob/nanobind/pull/195>`__).
+
+Miscellaneous fixes and improvements
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+* Use the new `PEP-697 <https://peps.python.org/pep-0697/>`__ interface to
+  access data in type objects when compiling stable ABI3 wheels. This improves
+  forward compatibility (the Python team may at some point significantly
+  refactor the layout and internals of type objects). (PR `#211
+  <https://github.com/wjakob/nanobind/pull/211>`__):
+* Added introspection attributes ``__self__`` and ``__func__`` to nanobind
+  bound methods, to make them more like regular Python bound methods.
+  Fixed a bug where ``some_obj.method.__call__()`` would behave differently
+  than ``some_obj.method()``.
+  (PR `#216 <https://github.com/wjakob/nanobind/pull/216>`__).
 * Updated the implementation of :cpp:class:`nb::enum_ <enum_>` so it does
   not take advantage of any private nanobind type details. As a side effect,
   the construct ``nb::class_<T>(..., nb::is_enum(...))`` is no longer permitted;
   use ``nb::enum_<T>(...)`` instead.
-  (PR `#195 <https://github.com/wjakob/nanobind/pull/195>`__).
-* nanobind enums now take advantage of :ref:`supplemental data <supplement>`
-  to improve the speed of object and name lookups. Note that this prevents
-  use of ``nb::supplement<T>()`` with enums for other purposes.
   (PR `#195 <https://github.com/wjakob/nanobind/pull/195>`__).
 * Added the :cpp:class:`nb::type_slots_callback` class binding annotation,
   similar to :cpp:class:`nb::type_slots` but allowing more dynamic choices.
@@ -110,23 +299,6 @@ Version 1.3.0 (TBD)
     return unequal rather than failing; order comparisons such as
     ``some_enum < None`` will still fail, but now with a more
     informative error.
-
-* nanobind now has limited support for binding types that inherit from
-  ``std::enable_shared_from_this<T>``. See the :ref:`advanced section
-  on object ownership <enable_shared_from_this>` for more details.
-  (PR `#212 <https://github.com/wjakob/nanobind/pull/212>`__).
-
-* Added introspection attributes ``__self__`` and ``__func__`` to nanobind
-  bound methods, to make them more like regular Python bound methods.
-  Fixed a bug where ``some_obj.method.__call__()`` would behave differently
-  than ``some_obj.method()``.
-  (PR `#216 <https://github.com/wjakob/nanobind/pull/216>`__).
-
-* Use the new `PEP-697 <https://peps.python.org/pep-0697/>`__ interface to
-  access data in type objects when compiling stable ABI3 wheels. This improves
-  forward compatibility (the Python team may at some point significantly
-  refactor the layout and internals of type objects). (PR `#211
-  <https://github.com/wjakob/nanobind/pull/211>`__):
 
 * ABI version 8.
 

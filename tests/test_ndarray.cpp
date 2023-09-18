@@ -8,10 +8,22 @@ namespace nb = nanobind;
 using namespace nb::literals;
 
 int destruct_count = 0;
-static const float f_const[] { 1, 2, 3, 4, 5, 6, 7, 8 };
+static float f_global[] { 1, 2, 3, 4, 5, 6, 7, 8 };
+static int i_global[] { 1, 2, 3, 4, 5, 6, 7, 8 };
+
+#if defined(__aarch64__)
+namespace nanobind {
+   template <> struct ndarray_traits<__fp16> {
+       static constexpr bool is_float  = true;
+       static constexpr bool is_bool   = false;
+       static constexpr bool is_int    = false;
+       static constexpr bool is_signed = true;
+   };
+};
+#endif
 
 NB_MODULE(test_ndarray_ext, m) {
-    m.def("get_shape", [](const nb::ndarray<> &t) {
+    m.def("get_shape", [](const nb::ndarray<nb::ro> &t) {
         nb::list l;
         for (size_t i = 0; i < t.ndim(); ++i)
             l.append(t.shape(i));
@@ -68,6 +80,8 @@ NB_MODULE(test_ndarray_ext, m) {
     m.def("check_order", [](nb::ndarray<nb::c_contig>) -> char { return 'C'; });
     m.def("check_order", [](nb::ndarray<nb::f_contig>) -> char { return 'F'; });
     m.def("check_order", [](nb::ndarray<>) -> char { return '?'; });
+
+    m.def("make_contig", [](nb::ndarray<nb::c_contig> a) { return a; });
 
     m.def("check_device", [](nb::ndarray<nb::device::cpu>) -> const char * { return "cpu"; });
     m.def("check_device", [](nb::ndarray<nb::device::cuda>) -> const char * { return "cuda"; });
@@ -134,7 +148,9 @@ NB_MODULE(test_ndarray_ext, m) {
 
         return nb::ndarray<float, nb::shape<2, 4>>(f, 2, shape, deleter);
     });
-    m.def("passthrough", [](nb::ndarray<> a) { return a; });
+
+    m.def("passthrough", [](nb::ndarray<> a) { return a; }, nb::rv_policy::none);
+    m.def("passthrough_copy", [](nb::ndarray<> a) { return a; }, nb::rv_policy::copy);
 
     m.def("ret_numpy", []() {
         float *f = new float[8] { 1, 2, 3, 4, 5, 6, 7, 8 };
@@ -146,12 +162,16 @@ NB_MODULE(test_ndarray_ext, m) {
         });
 
         return nb::ndarray<nb::numpy, float, nb::shape<2, 4>>(f, 2, shape,
-                                                             deleter);
+                                                              deleter);
     });
 
-    m.def("ret_numpy_const", []() {
+    m.def("ret_numpy_const_ref", []() {
         size_t shape[2] = { 2, 4 };
-        return nb::ndarray<nb::numpy, const float, nb::shape<2, 4>>(f_const, 2, shape);
+        return nb::ndarray<nb::numpy, const float, nb::shape<2, 4>>(f_global, 2, shape);
+    }, nb::rv_policy::reference);
+
+    m.def("ret_numpy_const", []() {
+        return nb::ndarray<nb::numpy, const float, nb::shape<2, 4>>(f_global, { 2, 4 });
     });
 
     m.def("ret_pytorch", []() {
@@ -164,7 +184,7 @@ NB_MODULE(test_ndarray_ext, m) {
         });
 
         return nb::ndarray<nb::pytorch, float, nb::shape<2, 4>>(f, 2, shape,
-                                                               deleter);
+                                                                deleter);
     });
 
     m.def("ret_array_scalar", []() {
@@ -180,14 +200,87 @@ NB_MODULE(test_ndarray_ext, m) {
     });
 
     m.def("noop_3d_c_contig",
-          [](nb::ndarray<float, nb::shape<nb::any, nb::any, nb::any>,
-                         nb::c_contig>) { return; });
+          [](nb::ndarray<float, nb::ndim<3>, nb::c_contig>) { return; });
 
     m.def("noop_2d_f_contig",
-          [](nb::ndarray<float, nb::shape<nb::any, nb::any>, nb::f_contig>) {
-              return;
-          });
+          [](nb::ndarray<float, nb::ndim<2>, nb::f_contig>) { return; });
 
     m.def("accept_rw", [](nb::ndarray<float, nb::shape<2>> a) { return a(0); });
     m.def("accept_ro", [](nb::ndarray<const float, nb::shape<2>> a) { return a(0); });
+
+    m.def("check", [](nb::handle h) { return nb::ndarray_check(h); });
+
+
+    struct Cls {
+        auto f1() { return nb::ndarray<nb::numpy, float>(data, { 10 }); }
+        auto f2() { return nb::ndarray<nb::numpy, float>(data, { 10 }, nb::cast(this, nb::rv_policy::none)); }
+        auto f3(nb::handle owner) { return nb::ndarray<nb::numpy, float>(data, { 10 }, owner); }
+
+        ~Cls() {
+           destruct_count++;
+        }
+
+        float data [10] { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+    };
+
+    nb::class_<Cls>(m, "Cls")
+        .def(nb::init<>())
+        .def("f1", &Cls::f1)
+        .def("f2", &Cls::f2)
+        .def("f1_ri", &Cls::f1, nb::rv_policy::reference_internal)
+        .def("f2_ri", &Cls::f2, nb::rv_policy::reference_internal)
+        .def("f3_ri", &Cls::f3, nb::rv_policy::reference_internal);
+
+    m.def("fill_view_1", [](nb::ndarray<> x) {
+        if (x.ndim() == 2 && x.dtype() == nb::dtype<float>()) {
+            auto v = x.view<float, nb::ndim<2>>();
+            for (size_t i = 0; i < v.shape(0); i++)
+                for (size_t j = 0; j < v.shape(1); j++)
+                    v(i, j) *= 2;
+        }
+    }, "x"_a.noconvert());
+
+    m.def("fill_view_2", [](nb::ndarray<float, nb::ndim<2>, nb::device::cpu> x) {
+        auto v = x.view();
+        for (size_t i = 0; i < v.shape(0); ++i)
+            for (size_t j = 0; j < v.shape(1); ++j)
+                v(i, j) = (float) (i * 10 + j);
+    }, "x"_a.noconvert());
+
+    m.def("fill_view_3", [](nb::ndarray<float, nb::shape<3, 4>, nb::c_contig, nb::device::cpu> x) {
+        auto v = x.view();
+        for (size_t i = 0; i < v.shape(0); ++i)
+            for (size_t j = 0; j < v.shape(1); ++j)
+                v(i, j) = (float) (i * 10 + j);
+    }, "x"_a.noconvert());
+
+    m.def("fill_view_4", [](nb::ndarray<float, nb::shape<3, 4>, nb::f_contig, nb::device::cpu> x) {
+        auto v = x.view();
+        for (size_t i = 0; i < v.shape(0); ++i)
+            for (size_t j = 0; j < v.shape(1); ++j)
+                v(i, j) = (float) (i * 10 + j);
+    }, "x"_a.noconvert());
+
+#if defined(__aarch64__)
+    m.def("ret_numpy_half", []() {
+        __fp16 *f = new __fp16[8] { 1, 2, 3, 4, 5, 6, 7, 8 };
+        size_t shape[2] = { 2, 4 };
+
+        nb::capsule deleter(f, [](void *data) noexcept {
+            destruct_count++;
+            delete[] (__fp16*) data;
+        });
+
+        return nb::ndarray<nb::numpy, __fp16, nb::shape<2, 4>>(f, 2, shape,
+                                                               deleter);
+    });
+#endif
+
+    m.def("cast", [](bool b) -> nb::ndarray<nb::numpy> {
+        using Ret = nb::ndarray<nb::numpy>;
+        if (b)
+            return Ret(nb::ndarray<nb::numpy, float, nb::shape<>>(f_global, 0, nullptr));
+        else
+            return Ret(nb::ndarray<nb::numpy, int, nb::shape<>>(i_global, 0, nullptr));
+    });
 }
