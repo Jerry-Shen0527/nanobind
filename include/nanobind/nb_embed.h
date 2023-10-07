@@ -19,9 +19,9 @@
 #    error Embedding the interpreter is not supported with PyPy
 #endif
 
-#define NB_EMBEDDED_MODULE_IMPL(name)                                                       \
-    extern "C" PyObject *nanobind_init_impl_##name();                                             \
-    extern "C" PyObject *nanobind_init_impl_##name() { return nanobind_init_wrapper_##name(); }
+#define NB_EMBEDDED_MODULE_IMPL(name)                                \
+    extern "C" [[maybe_unused]] NB_EXPORT PyObject *PyInit_##name(); \
+    extern "C" NB_EXPORT PyObject *PyInit_##name()
 
 /** \rst
     Add a new module to the table of builtins for the interpreter. Must be
@@ -38,29 +38,29 @@
             });
         }
  \endrst */
-#define NB_EMBEDDED_MODULE(name, variable)                                        \
-    static PyModuleDef NB_CONCAT(nanobind_module_def_, name);                     \
-    static void NB_CONCAT(nanobind_init_, name)(::nanobind::module_ &);           \
-    static PyObject NB_CONCAT(*nanobind_init_wrapper_, name)()                    \
-    {                                                                             \
-        auto m = nanobind::steal<nanobind::module_>(nanobind::detail::module_new( \
-            NB_TOSTRING(name), &NB_CONCAT(nanobind_module_def_, name)));          \
-        try                                                                       \
-        {                                                                         \
-            NB_CONCAT(nanobind_init_, name)(m);                                   \
-            return m.release().ptr();                                             \
-        }                                                                         \
-        catch (const std::exception &e)                                           \
-        {                                                                         \
-            PyErr_SetString(PyExc_ImportError, e.what());                         \
-            return nullptr;                                                       \
-        }                                                                         \
-    }                                                                             \
-    NB_EMBEDDED_MODULE_IMPL(name)                                                 \
-    ::nanobind::detail::embedded_module NB_CONCAT(nanobind_module_, name)(        \
-        NB_TOSTRING(name), NB_CONCAT(nanobind_init_impl_, name));                 \
-    void NB_CONCAT(nanobind_init_, name)(                                         \
-        ::nanobind::module_ & variable)  // NOLINT(bugprone-macro-parentheses)
+#define NB_EMBEDDED_MODULE(name, variable)                                                     \
+    static PyModuleDef NB_CONCAT(nanobind_module_def_, name);                                  \
+    [[maybe_unused]] static void NB_CONCAT(nanobind_init_, name)(::nanobind::module_ &);       \
+    NB_EMBEDDED_MODULE_IMPL(name)                                                              \
+    {                                                                                          \
+        nanobind::detail::init(NB_DOMAIN_STR);                                                 \
+        nanobind::module_ m = nanobind::steal<nanobind::module_>(nanobind::detail::module_new( \
+            NB_TOSTRING(name), &NB_CONCAT(nanobind_module_def_, name)));                       \
+        try                                                                                    \
+        {                                                                                      \
+            NB_CONCAT(nanobind_init_, name)(m);                                                \
+            return m.release().ptr();                                                          \
+        }                                                                                      \
+        catch (const std::exception &e)                                                        \
+        {                                                                                      \
+            PyErr_SetString(PyExc_ImportError, e.what());                                      \
+            return nullptr;                                                                    \
+        }                                                                                      \
+    }                                                                                          \
+    ::nanobind::detail::embedded_module NB_CONCAT(nanobind_module_, name)(                     \
+        NB_TOSTRING(name), NB_CONCAT(PyInit_, name));                              \
+    void NB_CONCAT(nanobind_init_, name)(::nanobind::module_ & variable)
+
 
 NAMESPACE_BEGIN(NB_NAMESPACE)
 
