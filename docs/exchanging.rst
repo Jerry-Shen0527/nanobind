@@ -100,6 +100,8 @@ The following table lists the currently available type casters:
   * - ``std::chrono::duration<..>``, ``std::chrono::time_point<..>``
       (:ref:`more details <chrono_conversions>`)
     - ``#include <nanobind/stl/chrono.h>``
+  * - ``std::complex<..>``
+    - ``#include <nanobind/stl/complex.h>``
   * - ``std::filesystem::path``
     - ``#include <nanobind/stl/filesystem.h>``
   * - ``std::function<..>``
@@ -385,7 +387,7 @@ directives:
 :cpp:class:`int_`, :cpp:class:`float_`,
 :cpp:class:`iterable`,
 :cpp:class:`iterator`, :cpp:class:`list`, :cpp:class:`mapping`,
-:cpp:class:`module_`, :cpp:class:`object`, :cpp:class:`sequence`,
+:cpp:class:`module_`, :cpp:class:`object`, :cpp:class:`set`, :cpp:class:`sequence`,
 :cpp:class:`slice`, :cpp:class:`str`, :cpp:class:`tuple`,
 :cpp:class:`weakref`,
 :cpp:class:`type_object`, :cpp:class:`type_object_t\<T\> <handle_t>`,

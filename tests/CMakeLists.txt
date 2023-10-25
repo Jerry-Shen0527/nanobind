@@ -13,7 +13,7 @@ endif()
 if (MSVC)
   add_compile_options(/W4)
 elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-  add_compile_options(-Wall -Wextra -Wno-unused-local-typedefs)
+  add_compile_options(-Wall -Wextra -pedantic -Wno-unused-local-typedefs)
 endif()
 
 if (UNIX AND (CMAKE_SIZEOF_VOID_P EQUAL 4) AND (CMAKE_SYSTEM_PROCESSOR STREQUAL i686))
@@ -29,8 +29,9 @@ nanobind_add_module(test_bind_map_ext test_stl_bind_map.cpp ${NB_EXTRA_ARGS})
 nanobind_add_module(test_bind_vector_ext test_stl_bind_vector.cpp ${NB_EXTRA_ARGS})
 nanobind_add_module(test_chrono_ext test_chrono.cpp ${NB_EXTRA_ARGS})
 nanobind_add_module(test_enum_ext test_enum.cpp ${NB_EXTRA_ARGS})
+nanobind_add_module(test_eval_ext test_eval.cpp ${NB_EXTRA_ARGS})
 nanobind_add_module(test_ndarray_ext test_ndarray.cpp ${NB_EXTRA_ARGS})
-nanobind_add_module(test_intrusive_ext test_intrusive.cpp object.cpp object.h ${NB_EXTRA_ARGS})
+nanobind_add_module(test_intrusive_ext test_intrusive.cpp test_intrusive_impl.cpp ${NB_EXTRA_ARGS})
 nanobind_add_module(test_exception_ext test_exception.cpp ${NB_EXTRA_ARGS})
 nanobind_add_module(test_make_iterator_ext test_make_iterator.cpp ${NB_EXTRA_ARGS})
 nanobind_add_module(test_issue_ext test_issue.cpp ${NB_EXTRA_ARGS})
@@ -62,6 +63,7 @@ set(TEST_FILES
   test_classes.py
   test_eigen.py
   test_enum.py
+  test_eval.py
   test_exception.py
   test_functions.py
   test_holders.py

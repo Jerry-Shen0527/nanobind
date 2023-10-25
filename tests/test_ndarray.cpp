@@ -1,5 +1,6 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
+#include <nanobind/stl/complex.h>
 #include <algorithm>
 #include <vector>
 
@@ -14,10 +15,11 @@ static int i_global[] { 1, 2, 3, 4, 5, 6, 7, 8 };
 #if defined(__aarch64__)
 namespace nanobind {
    template <> struct ndarray_traits<__fp16> {
-       static constexpr bool is_float  = true;
-       static constexpr bool is_bool   = false;
-       static constexpr bool is_int    = false;
-       static constexpr bool is_signed = true;
+       static constexpr bool is_complex = false;
+       static constexpr bool is_float   = true;
+       static constexpr bool is_bool    = false;
+       static constexpr bool is_int     = false;
+       static constexpr bool is_signed  = true;
    };
 };
 #endif
@@ -68,6 +70,7 @@ NB_MODULE(test_ndarray_ext, m) {
     });
 
     m.def("pass_float32", [](const nb::ndarray<float> &) { }, "array"_a.noconvert());
+    m.def("pass_complex64", [](const nb::ndarray<std::complex<float>> &) { }, "array"_a.noconvert());
     m.def("pass_uint32", [](const nb::ndarray<uint32_t> &) { }, "array"_a.noconvert());
     m.def("pass_bool", [](const nb::ndarray<bool> &) { }, "array"_a.noconvert());
     m.def("pass_float32_shaped",
@@ -119,10 +122,11 @@ NB_MODULE(test_ndarray_ext, m) {
         }
         printf("Tensor is on CPU? %i\n", ndarray.device_type() == nb::device::cpu::value);
         printf("Device ID = %u\n", ndarray.device_id());
-        printf("Tensor dtype check: int16=%i, uint32=%i, float32=%i\n",
+        printf("Tensor dtype check: int16=%i, uint32=%i, float32=%i complex64=%i\n",
             ndarray.dtype() == nb::dtype<int16_t>(),
             ndarray.dtype() == nb::dtype<uint32_t>(),
-            ndarray.dtype() == nb::dtype<float>()
+            ndarray.dtype() == nb::dtype<float>(),
+            ndarray.dtype() == nb::dtype<std::complex<float>>()
         );
     });
 
@@ -259,6 +263,13 @@ NB_MODULE(test_ndarray_ext, m) {
         for (size_t i = 0; i < v.shape(0); ++i)
             for (size_t j = 0; j < v.shape(1); ++j)
                 v(i, j) = (float) (i * 10 + j);
+    }, "x"_a.noconvert());
+
+    m.def("fill_view_5", [](nb::ndarray<std::complex<float>, nb::shape<2, 2>, nb::c_contig, nb::device::cpu> x) {
+        auto v = x.view();
+        for (size_t i = 0; i < v.shape(0); ++i)
+            for (size_t j = 0; j < v.shape(1); ++j)
+                v(i, j) *= std::complex<float>(-1.0f, 2.0f);
     }, "x"_a.noconvert());
 
 #if defined(__aarch64__)

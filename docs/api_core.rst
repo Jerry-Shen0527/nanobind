@@ -72,11 +72,11 @@ following mixin class that lives in the ``nanobind::detail`` namespace.
 
       Obtain a const reference to the derived class.
 
-   .. cpp:function:: handle inc_ref() const noexcept
+   .. cpp:function:: handle inc_ref() const
 
       Increases the reference count and returns a reference to the Python object.
 
-   .. cpp:function:: handle ref_ref() const noexcept
+   .. cpp:function:: handle ref_ref() const
 
       Decreases the reference count and returns a reference to the Python object.
 
@@ -354,6 +354,16 @@ Without reference counting
       Check if the handle refers to a valid Python object. Equivalent to
       :cpp:func:`detail::api::is_valid()`
 
+   .. cpp:function:: handle inc_ref() const noexcept
+
+      Increases the reference count and returns a reference to the Python object.
+      Never raises an exception.
+
+   .. cpp:function:: handle ref_ref() const noexcept
+
+      Decreases the reference count and returns a reference to the Python object.
+      Never raises an exception.
+
    .. cpp:function:: PyObject * ptr() const
 
       Return the underlying ``PyObject*`` pointer.
@@ -563,6 +573,24 @@ Attribute access
    Equivalent to ``del h.key`` and ``delattr(h, key)`` in Python.
    Raises :cpp:class:`python_error` if the operation fails.
 
+.. cpp:function:: template <typename T> void del(detail::accessor<T> &)
+
+   Remove an element from a sequence or mapping. The C++ statement
+
+   .. code-block:: cpp
+
+      nb::del(o[key]);
+
+   is equivalent to ``del o[key]`` in Python.
+
+   When the element cannot be removed, the function will raise
+   :cpp:class:`python_error` wrapping either a Python ``IndexError`` (for
+   sequence types) or a ``KeyError`` (for mapping types).
+
+.. cpp:function:: template <typename T> void del(detail::accessor<T> &&)
+
+   Rvalue equivalent of the above expression.
+
 Size queries
 ------------
 
@@ -582,6 +610,10 @@ Size queries
 .. cpp:function:: size_t len(const dict &d)
 
    Equivalent to ``len(d)`` in Python. Optimized variant for dictionaries.
+
+.. cpp:function:: size_t len(const set &d)
+
+   Equivalent to ``len(d)`` in Python. Optimized variant for sets.
 
 .. cpp:function:: size_t len_hint(handle h)
 
@@ -620,6 +652,13 @@ Wrapper classes
 
    Wrapper class representing Python ``tuple`` instances.
 
+   Use the standard ``operator[]`` C++ operator with an integer argument to
+   read tuple elements (the bindings for this operator are provided by the
+   parent class and not listed here). Once created, the set is immutable and
+   its elements cannot be replaced.
+
+   Use the :py:func:`make_tuple` function to create new tuples.
+
    .. cpp:function:: tuple()
 
       Create an empty tuple
@@ -647,7 +686,7 @@ Wrapper classes
 
       Analogous to ``self[key]`` in Python, where ``key`` is an arithmetic
       type (e.g., an integer). The result is wrapped in an :cpp:class:`accessor <detail::accessor>` so
-      that it can be read and written.
+      that it can be read and converted. Write access is not possible.
 
       The function overrides the generic version in :cpp:class:`detail::api`
       and is more efficient for tuples.
@@ -656,6 +695,12 @@ Wrapper classes
 .. cpp:class:: list : public object
 
    Wrapper class representing Python ``list`` instances.
+
+   Use the standard ``operator[]`` C++ operator with an integer argument to
+   read and write list elements (the bindings for this operator are provided by
+   the parent class and not listed here).
+
+   Use the :cpp:func:`nb::del <del>` function to remove elements.
 
    .. cpp:function:: list()
 
@@ -699,6 +744,12 @@ Wrapper classes
 
    Wrapper class representing Python ``dict`` instances.
 
+   Use the standard ``operator[]`` C++ operator to read and write dictionary
+   elements (the bindings for this operator are provided by the parent class
+   and not listed here).
+
+   Use the :cpp:func:`nb::del <del>` function to remove elements.
+
    .. cpp:function:: dict()
 
       Create an empty dictionary
@@ -733,6 +784,35 @@ Wrapper classes
 
       Return a list containing all dictionary items as ``(key, value)`` pairs.
 
+   .. cpp:function:: void clear()
+
+      Clear the contents of the dictionary.
+
+.. cpp:class:: set: public object
+
+   Wrapper class representing Python ``set`` instances.
+
+   .. cpp:function:: set()
+
+      Create an empty set
+
+   .. cpp:function:: size_t size() const
+
+      Return the number of set elements.
+
+   .. cpp:function:: template <typename T> void add(T&& key)
+
+      Add a key to the set. When `T` does not already represent a wrapped
+      Python object, the function performs a cast.
+
+   .. cpp:function:: template <typename T> bool contains(T&& key) const
+
+      Check whether the set contains a particular key. When `T` does not
+      already represent a wrapped Python object, the function performs a cast.
+
+   .. cpp:function:: void clear()
+
+      Clear the contents of the set
 
 .. cpp:class:: module_: public object
 
@@ -1286,6 +1366,25 @@ the reference section on :ref:`class binding <class_binding>`.
    Usage of this function is explained in the documentation section on
    :ref:`exception chaining <exception_chaining>`.
 
+.. cpp:function:: void raise(const char * fmt, ...)
+
+   This function takes a ``printf``-style format string with arguments and then
+   raises a ``std::runtime_error`` with the formatted string. The function has
+   no dependence on Python, and nanobind merely includes it for convenience.
+
+.. cpp:function:: void raise_type_error(const char * fmt, ...)
+
+   This function is analogous to :cpp:func:`raise`, except that it raises a
+   :cpp:class:`builtin_exception` that will convert into a Python ``TypeError``
+   when crossing the language interface.
+
+.. cpp:function:: void raise_python_error()
+
+   This function should only be called if a Python error status was set by a
+   prior operation, which should now be raised as a C++ exception. The function
+   is analogous to the statement ``throw python_error();`` but compiles into
+   more compact code.
+
 Casting
 -------
 
@@ -1434,20 +1533,42 @@ parameter of :cpp:func:`module_::def`, :cpp:func:`class_::def`,
 
 .. cpp:struct:: template <size_t Nurse, size_t Patient> keep_alive
 
-   Following the function evaluation, keep object ``Patient`` alive while the
-   object ``Nurse`` exists. The function uses the following indexing
-   convention:
+   Following evaluation of the bound function, keep the object referenced by
+   index ``Patient`` alive *as long as* the object with index ``Nurse`` exists.
+   This uses the following indexing convention:
 
-   - Index ``0`` refers to the return value of methods. (It should not be used in
-     constructors)
+   - Index ``0`` refers to the return value of methods. It should not be used
+     in constructors or functions that do not return a result.
 
-   - Index ``1`` refers to the first argument. In methods and constructors, index ``1``
-     refers to the implicit ``this`` pointer, while regular arguments begin at index ``2``.
+   - Index ``1`` refers to the first argument. In methods and constructors,
+     index ``1`` refers to the implicit ``this`` pointer, while regular
+     arguments begin at index ``2``.
 
-    When the nurse or patient equal ``None``, the annotation does nothing.
+   The annotation has the following runtime characteristics:
 
-    nanobind will raise an exception when the nurse object is neither a
-    nanobind-registered type nor weak-referenceable.
+    - It does nothing when the nurse or patient object are ``None``.
+
+    - It raises an exception when the nurse object is neither
+      weak-referenceable nor an instance of a binding created via
+      :cpp:class:`nb::class_\<..\> <class_>`.
+
+   Two additional caveats regarding :cpp:class:`keep_alive <keep_alive>` are
+   noteworthy:
+
+   - It *usually* doesn't make sense to specify a ``Nurse`` or ``Patient`` for an
+     argument or return value handled by a :ref:`type caster <type_caster>` (e.g.,
+     a STL vector handled via the include directive ``#include
+     <nanobind/stl/vector.h>``). That's because type casters copy-convert the
+     Python object into an equivalent C++ object, whose lifetime is decoupled
+     from the original Python object. However, the :cpp:class:`keep_alive
+     <keep_alive>` annotation *only* affects the lifetime of Python objects
+     *and not their C++ copy*.
+
+   - Dispatching a Python → C++ function call may require the :ref:`implicit
+     conversion <noconvert>` of function arguments. In this case, the objects
+     passed to the C++ function differ from the originally specified arguments.
+     The ``Nurse`` and ``Patient`` annotation always refer to the *final* object
+     following implicit conversion.
 
 .. cpp:struct:: raw_doc
 
@@ -2131,7 +2252,7 @@ Low-level type and instance access
 nanobind exposes a low-level interface to provide fine-grained control over
 the sequence of steps that instantiates a Python object wrapping a C++
 instance. An thorough explanation of these features is provided in a
-:ref:`separate section <lowlevel>`. 
+:ref:`separate section <lowlevel>`.
 
 Type objects
 ^^^^^^^^^^^^
@@ -2335,6 +2456,13 @@ Global flags
    implicit conversion, and when that conversion is not successful. Call this
    function to disable or re-enable the warnings.
 
+.. cpp:function:: inline bool is_alive() noexcept
+
+   The function returns ``true`` when nanobind is initialized and ready for
+   use. It returns ``false`` when the Python interpreter has shut down, causing
+   the destruction various nanobind-internal data structures. Having access to
+   this liveness status can be useful to avoid operations that are illegal in
+   the latter context.
 
 Miscellaneous
 -------------
@@ -2366,6 +2494,10 @@ Miscellaneous
 .. cpp:function:: dict builtins()
 
    Return the ``__builtins__`` dictionary.
+
+.. cpp:function:: dict globals()
+
+   Return the ``globals()`` dictionary.
 
 .. cpp:function:: template <typename Source, typename Target> void implicitly_convertible()
 

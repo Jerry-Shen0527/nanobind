@@ -70,6 +70,8 @@ with TemporaryDirectory() as temp_dir:
             'include/nanobind/stl/*.h',
             'include/nanobind/stl/detail/*.h',
             'include/nanobind/eigen/*.h',
+            'include/nanobind/intrusive/*.h',
+            'include/nanobind/intrusive/*.inl',
             'ext/robin_map/include/tsl/robin_map.h',
             'ext/robin_map/include/tsl/robin_hash.h',
             'ext/robin_map/include/tsl/robin_growth_policy.h',

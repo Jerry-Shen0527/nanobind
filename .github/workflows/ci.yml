@@ -21,7 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         os: ['ubuntu-latest', 'windows-2022', 'macos-latest']
-        python: ['3.8', '3.9', '3.10', '3.11', '3.12.0-rc.1', 'pypy3.9', 'pypy3.10']
+        python: ['3.8', '3.9', '3.10', '3.11', '3.12', 'pypy3.9-v7.3.12', 'pypy3.10-v7.3.12']
 
     name: "Python ${{ matrix.python }} / ${{ matrix.os }}"
     runs-on: ${{ matrix.os }}
@@ -35,9 +35,10 @@ jobs:
       uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.python }}
+        cache: 'pip'
 
-    - name: Update CMake
-      uses: jwlawson/actions-setup-cmake@v1.13
+    - name: Install the latest CMake
+      uses: lukka/get-cmake@latest
 
     - name: Install Eigen
       if: matrix.os == 'ubuntu-latest'
@@ -48,7 +49,7 @@ jobs:
         python -m pip install pytest pytest-github-actions-annotate-failures
 
     - name: Install NumPy
-      if: matrix.python != 'pypy3.9' && matrix.python != 'pypy3.10' && matrix.python != '3.12.0-rc.1'
+      if: ${{ !startsWith(matrix.python, 'pypy') }}
       run: |
         python -m pip install numpy scipy
 

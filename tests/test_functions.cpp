@@ -228,5 +228,15 @@ NB_MODULE(test_functions_ext, m) {
         return nb::cast<const char *>(h);
     });
 
-    m.def("test_0", +[](int a, uint64_t b, int64_t c, uint32_t d, int32_t e, uint16_t f) { return a+b+c+d+e+f; });
+    m.def("test_set", []() {
+        nb::set s;
+        s.add("123");
+        s.add(123);
+        return s;
+    });
+
+    m.def("test_set_contains", [](nb::set s, nb::handle h) { return s.contains(h); });
+
+    m.def("test_del_list", [](nb::list l) { nb::del(l[2]); });
+    m.def("test_del_dict", [](nb::dict l) { nb::del(l["a"]); });
 }

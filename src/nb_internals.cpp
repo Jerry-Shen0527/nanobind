@@ -17,7 +17,7 @@
 
 /// Tracks the ABI of nanobind
 #ifndef NB_INTERNALS_VERSION
-#  define NB_INTERNALS_VERSION 10
+#  define NB_INTERNALS_VERSION 12
 #endif
 
 /// On MSVC, debug and release builds are not ABI-compatible!
@@ -220,10 +220,19 @@ void default_exception_translator(const std::exception_ptr &p, void *) {
 nb_internals *internals = nullptr;
 PyTypeObject *nb_meta_cache = nullptr;
 
-#if !defined(PYPY_VERSION)
+static bool is_alive_value = false;
+static bool *is_alive_ptr = &is_alive_value;
+bool is_alive() noexcept { return *is_alive_ptr; }
+
 static void internals_cleanup() {
     if (!internals)
         return;
+
+    *is_alive_ptr = false;
+
+#if !defined(PYPY_VERSION)
+    /* The memory leak checker is unsupported on PyPy, see
+       see https://foss.heptapod.net/pypy/pypy/-/issues/3855 */
 
     bool leak = false;
 
@@ -243,12 +252,13 @@ static void internals_cleanup() {
         leak = true;
     }
 
-    if (!internals->type_c2p.empty()) {
+    if (!internals->type_c2p_slow.empty() ||
+        !internals->type_c2p_fast.empty()) {
         if (internals->print_leak_warnings) {
             fprintf(stderr, "nanobind: leaked %zu types!\n",
-                    internals->type_c2p.size());
+                    internals->type_c2p_slow.size());
             int ctr = 0;
-            for (const auto &kv : internals->type_c2p) {
+            for (const auto &kv : internals->type_c2p_slow) {
                 fprintf(stderr, " - leaked type \"%s\"\n", kv.second->name);
                 if (ctr++ == 10) {
                     fprintf(stderr, " - ... skipped remainder\n");
@@ -286,12 +296,12 @@ static void internals_cleanup() {
                             "counting issue in the binding code.\n");
         }
 
-#if NB_ABORT_ON_LEAK == 1
-        abort(); // Extra-strict behavior for the CI server
-#endif
+        #if NB_ABORT_ON_LEAK == 1
+            abort(); // Extra-strict behavior for the CI server
+        #endif
     }
-}
 #endif
+}
 
 NB_NOINLINE void init(const char *name) {
     if (internals)
@@ -317,6 +327,7 @@ NB_NOINLINE void init(const char *name) {
         check(internals,
               "nanobind::detail::internals_fetch(): capsule pointer is NULL!");
         nb_meta_cache = internals->nb_meta;
+        is_alive_ptr = internals->is_alive_ptr;
         return;
     }
 
@@ -360,6 +371,9 @@ NB_NOINLINE void init(const char *name) {
 #endif
 
     p->translators = { default_exception_translator, nullptr, nullptr };
+    is_alive_value = true;
+    is_alive_ptr = &is_alive_value;
+    p->is_alive_ptr = is_alive_ptr;
 
 #if PY_VERSION_HEX < 0x030C0000 && !defined(PYPY_VERSION)
     /* The implementation of typing.py on CPython <3.12 tends to introduce
@@ -395,9 +409,6 @@ NB_NOINLINE void init(const char *name) {
     }
 #endif
 
-#if !defined(PYPY_VERSION)
-    /* Install the memory leak checker. This feature is unsupported on
-       PyPy, see https://foss.heptapod.net/pypy/pypy/-/issues/3855 */
     if (Py_AtExit(internals_cleanup))
         fprintf(stderr,
                 "Warning: could not install the nanobind cleanup handler! This "
@@ -405,7 +416,6 @@ NB_NOINLINE void init(const char *name) {
                 "resources at interpreter shutdown (e.g., to avoid leaks being "
                 "reported by tools like 'valgrind'). If you are a user of a "
                 "python extension library, you can ignore this warning.");
-#endif
 
     capsule = PyCapsule_New(p, "nb_internals", nullptr);
     int rv = PyDict_SetItem(dict, key, capsule);

@@ -15,10 +15,114 @@ case, both modules must use the same nanobind ABI version, or they will be
 isolated from each other. Releases that don't explicitly mention an ABI version
 below inherit that of the preceding release.
 
-Version 1.6.0 (TBA)
+Version 1.8.0 (TBA)
 -------------------
 
-* Several :cpp:class:`nb::ndarray\<..\> <ndarray>` improvements: 
+* nanobind now considers two C++ ``std::type_info`` instances to be equal when
+  their mangled names match. The previously used pointer comparison was fast
+  but fragile and often caused multi-part extensions to not recognize each
+  other's types. This version introduces a two-level caching scheme (search by
+  pointer, then by name) to fix such problems once and for all, while avoiding
+  the cost of constantly comparing very long mangled names. (commit `b515b1
+  <https://github.com/wjakob/nanobind/commit/b515b1f7f2f4ecc0357818e6201c94a9f4cbfdc2>`__).
+
+
+Version 1.7.0 (Oct 19, 2023)
+----------------------------
+
+New features
+^^^^^^^^^^^^
+
+* The nd-array class :cpp:class:`nb::ndarray\<T\> <ndarray>` now supports
+  complex-valued ``T`` (e.g., ``std::complex<double>``). For this, the header
+  file ``nanobind/stl/complex.h`` must be included. (PR `#319
+  <https://github.com/wjakob/nanobind/pull/319>`__, commit `6cbd13
+  <https://github.com/wjakob/nanobind/commit/6cbd1387753ea8f519ac0fe2242f0a54dd670ede>`__).
+
+* Added the function :cpp:func:`nb::del() <del>`, which takes an arbitrary
+  accessor object as input and tries to delete the associated entry.
+  The C++ statement
+
+  .. code-block:: cpp
+
+     nb::del(o[key]);
+
+  is equivalent to ``del o[key]`` in Python. (commit `4dd745
+  <https://github.com/wjakob/nanobind/commit/4dd74596ac7b0f850cb0144f42a438124b91720c>`__).
+
+* Exposed several convenience functions for raising exceptions as public API:
+  :cpp:func:`nb::raise <raise>`, :cpp:func:`nb::raise_type_error
+  <raise_type_error>`, and :cpp:func:`nb::raise_python_error
+  <raise_python_error>`. (commit `0b7f3b
+  <https://github.com/wjakob/nanobind/commit/0b7f3b1d2a182bda8b95826a3f98cc3e2d0402db>`__).
+
+* Added :cpp:func:`nb::globals() <globals>`. (PR `#311
+  <https://github.com/wjakob/nanobind/pull/311>`__, commit `f0a9eb
+  <https://github.com/wjakob/nanobind/commit/f0a9ebd9cd384ac554312247526b120102563e53>`__).
+
+* The ``char*`` type caster now accepts ``nullptr`` and converts it into a
+  Python ``None`` object. (PR `#318
+  <https://github.com/wjakob/nanobind/pull/317>`__, commit `30a6ba
+  <https://github.com/wjakob/nanobind/commit/30a6bac97a89bfafad82c2c5b6ef4516c00c35d6>`__).
+
+* Added the function :cpp:func:`nb::is_alive() <is_alive>`, which returns
+  ``false`` when nanobind was destructed by Python (e.g., during interpreter
+  shutdown) making further use of the API illegal. (commit `b431d0
+  <https://github.com/wjakob/nanobind/commit/b431d040f7b0585e9901856ee6c9b72281a37fa8>`__).
+
+* Minor fixes and improvements.
+
+* ABI version 11.
+
+Bugfixes
+^^^^^^^^
+
+* The behavior of the :cpp:class:`nb::keep_alive\<Nurse, Patient\>
+  <keep_alive>` function binding annotation was changed as follows: when the
+  function call requires the implicit conversion of an argument, the lifetime
+  constraint now applies to the newly produced argument instead of the original
+  object. The change was rolled into a minor release since the former behavior
+  is arguably undesirable and dangerous. (commit `9d4b2e
+  <https://github.com/wjakob/nanobind/commit/9d4b2e317dbf32efab4ed41b6c275f9dbbbcf29f>`__).
+
+* STL type casters previously raised an exception when casting a Python container
+  containing a ``None`` element into a C++ container that was not able to
+  represent ``nullptr`` (e.g., ``std::vector<T>`` instead of
+  ``std::vector<T*>``). However, this exception was raised in a context where
+  exceptions were not allowed, causing the process to be ``abort()``-ed, which
+  is very bad. This issue is now fixed, and such conversions are refused. (PR
+  `#318 <https://github.com/wjakob/nanobind/pull/318>`__, commits `d1ad3b
+  <https://github.com/wjakob/nanobind/commit/d1ad3b91346a1566f42fdf194a3ed9c3eeec5858>`__
+  and `5f25ae
+  <https://github.com/wjakob/nanobind/commit/5f25ae0eb9691fbe03a20bcb9f604277ccc1884b>`__).
+
+* The STL sequence casters (``std::vector<T>``, etc.) now refuse to unpack
+  ``str`` and ``bytes`` objects analogous to pybind11. (commit `7e4a88
+  <https://github.com/wjakob/nanobind/commit/7e4a88b7ccc047ce34ae8ae99492d46b1acf341a>`__).
+
+
+Version 1.6.2 (Oct 3, 2023)
+-------------------
+
+* Added a missing include file used by the new intrusive reference counting
+  sample implementation from v1.6.0. (commit `31d115
+  <https://github.com/wjakob/nanobind/commit/31d115fce310475fed0f539b9446cc41ba9ff4d4>`__).
+
+Version 1.6.1 (Oct 2, 2023)
+-------------------
+
+* Added missing namespace declaration to the :cpp:class:`ref` intrusive
+  reference counting RAII helper class added in version 1.6.0. (commit `3ba352
+  <https://github.com/wjakob/nanobind/commit/3ba3522e99c8f1f4bcc7c172abd2006eeaa8eaf8>`__).
+
+
+Version 1.6.0 (Oct 2, 2023)
+-------------------
+
+New features
+^^^^^^^^^^^^
+
+* Several :cpp:class:`nb::ndarray\<..\> <ndarray>` improvements:
 
   1. CPU loops involving nanobind ndarrays weren't getting properly vectorized.
      This release of nanobind adds *views*, which provide an efficient
@@ -48,6 +152,36 @@ Version 1.6.0 (TBA)
   :cpp:func:`nb::mapping::contains() <mapping::contains>` to the Python type
   wrappers. (commit `64d87a
   <https://github.com/wjakob/nanobind/commit/64d87ae01355c247123613f140cef8e71bc98fc7>`__).
+
+* Added :cpp:func:`nb::exec() <exec>` and :cpp:func:`nb:eval() <eval>`. (PR `#299
+  <https://github.com/wjakob/nanobind/pull/299>`__).
+
+* Added a type caster for ``std::complex<T>``. (PR `#292
+  <https://github.com/wjakob/nanobind/pull/292>`__, commit `dcbed4
+  <https://github.com/wjakob/nanobind/commit/dcbed4fe1500383ad1f4dff47cacbf0f2e6b1d3f>`__).
+
+* Added an officially supported sample implementation of :ref:`intrusive
+  reference counting <intrusive>` via the :cpp:class:`intrusive_counter`
+  :cpp:class:`intrusive_base`, and :cpp:class:`ref` classes. (commit `3fa1af
+  <https://github.com/wjakob/nanobind/commit/3fa1af5e9e6fd0b08d13e16bb425a18963854829>`__).
+
+Bugfixes
+^^^^^^^^
+
+* Fixed a serious issue involving combinations of bound types (e.g., ``T``) and
+  type casters (e.g., ``std::vector<T>``), where nanobind was too aggressive in
+  its use of *move semantics*. Calling a bound function from Python taking such
+  a list (e.g., ``f([t1, t2, ..])``) would destruct ``t1, t2, ..`` if the type
+  ``T`` exposed a move constructor, which is highly non-intuitive and no
+  longer happens as of this fix.
+
+  Further investigation also revealed inefficiencies in the previous
+  implementation where moves were actually possible but not done (e.g., for
+  functions taking an STL vector by value). Some binding projects may see
+  speedups as a consequence of this change. (issue `#307
+  <https://github.com/wjakob/nanobind/issues/307>`__, commit `122015
+  <https://github.com/wjakob/nanobind/commit/1220156961ce2d0c96a525f3c27b88e824b997ce>`__).
+
 
 Version 1.5.2 (Aug 24, 2023)
 ----------------------------
@@ -174,7 +308,7 @@ Version 1.3.2 (June 2, 2023)
 Version 1.3.1 (May 31, 2023)
 ----------------------------
 
-* CMake build system improvements for stable ABI wheel generation. 
+* CMake build system improvements for stable ABI wheel generation.
   (PR `#222 <https://github.com/wjakob/nanobind/pull/222>`__).
 
 Version 1.3.0 (May 31, 2023)

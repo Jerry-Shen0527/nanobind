@@ -69,6 +69,13 @@ static int nd_ndarray_tpbuffer(PyObject *exporter, Py_buffer *view, int) {
             }
             break;
 
+        case dlpack::dtype_code::Complex:
+            switch (t.dtype.bits) {
+                case 64: format = "Zf"; break;
+                case 128: format = "Zd"; break;
+            }
+            break;
+
         case dlpack::dtype_code::Bool:
             format = "?";
             break;
@@ -180,6 +187,10 @@ static PyObject *dlpack_from_buffer_protocol(PyObject *o, bool ro) {
     if (skip_first && format_str)
         format = *++format_str;
 
+    bool is_complex = format_str[0] == 'Z';
+    if (is_complex)
+        format_str++;
+
     dlpack::dtype dt { };
     bool fail = format_str && format_str[1] != '\0';
 
@@ -208,6 +219,11 @@ static PyObject *dlpack_from_buffer_protocol(PyObject *o, bool ro) {
 
             default:
                 fail = true;
+        }
+
+        if (is_complex) {
+            fail |= dt.code != (uint8_t) dlpack::dtype_code::Float;
+            dt.code = (uint8_t) dlpack::dtype_code::Complex;
         }
 
         dt.lanes = 1;
@@ -293,7 +309,7 @@ bool ndarray_check(PyObject *o) noexcept {
 
 
 ndarray_handle *ndarray_import(PyObject *o, const ndarray_req *req,
-                               bool convert) noexcept {
+                               bool convert, cleanup_list *cleanup) noexcept {
     object capsule;
     bool is_pycapsule = PyCapsule_CheckExact(o);
 
@@ -432,6 +448,7 @@ ndarray_handle *ndarray_import(PyObject *o, const ndarray_req *req,
                 case (uint8_t) dlpack::dtype_code::Int: prefix = "int"; break;
                 case (uint8_t) dlpack::dtype_code::UInt: prefix = "uint"; break;
                 case (uint8_t) dlpack::dtype_code::Float: prefix = "float"; break;
+                case (uint8_t) dlpack::dtype_code::Complex: prefix = "complex"; break;
                 default:
                     return nullptr;
             }
@@ -456,10 +473,15 @@ ndarray_handle *ndarray_import(PyObject *o, const ndarray_req *req,
         } catch (...) { converted.reset(); }
 
         // Potentially try again recursively
-        if (!converted.is_valid())
+        if (!converted.is_valid()) {
             return nullptr;
-        else
-            return ndarray_import(converted.ptr(), req, false);
+        } else {
+            ndarray_handle *h =
+                ndarray_import(converted.ptr(), req, false, nullptr);
+            if (h && cleanup)
+                cleanup->append(converted.release().ptr());
+            return h;
+        }
     }
 
     if (!pass_dtype || !pass_device || !pass_shape || !pass_order)

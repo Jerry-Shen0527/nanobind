@@ -322,3 +322,29 @@ def test37_test_str():
     assert t.test_cast_str('abc') == 'abc'
     with pytest.raises(RuntimeError):
         assert t.test_cast_str(123)
+
+def test38_set():
+    x = t.test_set()
+    assert isinstance(x, set)
+    assert len(x) == 2
+    assert 123 in x and '123' in x
+    assert t.test_set_contains(x, 123)
+    assert t.test_set_contains(x, '123')
+    assert not t.test_set_contains(x, '1234')
+    assert not t.test_set_contains(x, 1234)
+
+
+def test39_del():
+    l = [0,1,2,3,4]
+    t.test_del_list(l)
+    assert l == [0, 1, 3, 4]
+
+    l = {'a' : 0, 'b' : 1}
+    t.test_del_dict(l)
+    assert l == {'b' : 1}
+
+    with pytest.raises(IndexError):
+        t.test_del_list([])
+
+    with pytest.raises(KeyError):
+        t.test_del_dict({})
